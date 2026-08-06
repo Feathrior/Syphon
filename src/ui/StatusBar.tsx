@@ -13,7 +13,7 @@ export default function StatusBar() {
       <span>{hasCycle ? '回路警告' : '拓扑正常'}</span>
       <span>{autoRun ? '自动执行:开' : '自动执行:关'}</span>
       <span className="nf-status-right">
-        右键 / Shift+A 新建节点 · 删除键移除 · Ctrl+拖拽连线 · 滚轮缩放 · 中键平移
+        右键 / Shift+A 新建节点 · 删除键移除 · Ctrl+拖拽连线 · Ctrl+滚轮缩放画布 · 滚轮在预览窗内缩放
       </span>
     </div>
   );

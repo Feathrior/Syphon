@@ -1,13 +1,74 @@
+/* ============================================================
+   Syphon · 高级极简平面设计 (Minimal Flat Design)
+   默认亮色主题 · [data-theme="dark"] 切换为暗色
+   原则:
+   - 平面化:细边框 + 留白 + 克制阴影,强调色仅用于关键状态
+   - 流畅动画:界面元素(按钮/菜单/输入/面板)过渡丰富
+   - 节点零动画:节点及其子元素不设任何 transition/animation,
+     保证节点拖拽与大规模布局操作极度顺畅
+   ============================================================ */
+
+/* ---- 亮色主题(默认):工作区统一 #DEDEDE ---- */
 :root {
-  --bg0: #0b1220;
-  --bg1: #0f172a;
-  --bg2: #16223a;
-  --bg3: #1e293b;
-  --border: #2b3a55;
-  --text: #e2e8f0;
-  --text-dim: #94a3b8;
-  --accent: #8b5cf6;
-  --danger: #ef4444;
+  --bg-app: #dedede;
+  --bg-surface: #dedede;
+  --bg-toolbar: #ffffff;
+  --bg-raise: #f2f2f2;
+  --bg-float: #e9e9e9;
+  --bg-canvas: #dedede;
+  --bg-node: #ffffff;
+  --bg-input: #ffffff;
+  --stroke: rgba(0, 0, 0, 0.08);
+  --stroke-strong: rgba(0, 0, 0, 0.14);
+  --text: #1c1c1c;
+  --text-dim: #5f5f5f;
+  --text-faint: #9d9d9d;
+  --accent: #0067c0;              /* Fluent 亮色强调蓝 */
+  --accent-hover: #0060af;
+  --accent-press: #00529a;
+  --accent-glow: rgba(0, 103, 192, 0.22);
+  --on-accent: #ffffff;
+  --success: #107c10;
+  --danger: #c42b1c;
+  --warn: #9d5d00;
+  --mono: Consolas, 'Cascadia Code', monospace;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --radius-s: 4px;
+  --radius-m: 8px;
+  /* React Flow 主题联动 */
+  --flow-dot: rgba(0, 0, 0, 0.28);
+  --flow-mask: rgba(255, 255, 255, 0.62);
+  --flow-edge: #b3b3b3;
+  --shadow-float: 0 2px 8px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ---- 暗色主题:Fluent 深色 ---- */
+[data-theme='dark'] {
+  --bg-app: #1f1f1f;
+  --bg-surface: #2b2b2b;
+  --bg-toolbar: #2b2b2b;
+  --bg-raise: #333333;
+  --bg-float: #3d3d3d;
+  --bg-canvas: transparent;       /* 透出窗口 Mica */
+  --bg-node: #2b2b2b;
+  --bg-input: #333333;
+  --stroke: rgba(255, 255, 255, 0.08);
+  --stroke-strong: rgba(255, 255, 255, 0.14);
+  --text: #f9f9fa;
+  --text-dim: #c7c7c7;
+  --text-faint: #8a8a8a;
+  --accent: #60cdff;
+  --accent-hover: #79d8ff;
+  --accent-press: #4cc2ff;
+  --accent-glow: rgba(96, 205, 255, 0.32);
+  --on-accent: #0a0a0a;
+  --success: #6ccb5f;
+  --danger: #ff99a4;
+  --warn: #fce100;
+  --flow-dot: #475569;
+  --flow-mask: rgba(2, 6, 23, 0.7);
+  --flow-edge: #64748b;
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -22,18 +83,20 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-  background: var(--bg0);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  background: var(--bg-app);
   color: var(--text);
   font-size: 13px;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* ============ 应用骨架 ============ */
 .nf-app {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg0);
+  background: var(--bg-app);
 }
 
 /* ============ 工具栏 ============ */
@@ -41,94 +104,115 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 44px;
-  padding: 0 12px;
-  /* 半透明背景,让窗口顶部的云母(Mica)效果透出 */
-  background: rgba(15, 23, 42, 0.72);
-  border-bottom: 1px solid var(--border);
+  height: 48px;
+  padding: 0 14px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--stroke);
   flex-shrink: 0;
   user-select: none;
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 
 .nf-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-right: 12px;
-  border-right: 1px solid var(--border);
+  gap: 10px;
+  padding-right: 14px;
+  border-right: 1px solid var(--stroke);
+  transition: border-color 0.3s var(--ease);
 }
 
 .nf-brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #8b5cf6, #3b82f6);
-  color: #fff;
-  font-weight: 700;
-  font-size: 14px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: block;
+  object-fit: cover;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .nf-brand-text {
-  font-weight: 600;
+  font-weight: normal;
   font-size: 13px;
   color: var(--text);
   white-space: nowrap;
+  letter-spacing: 0.2px;
 }
 
 .nf-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .nf-toolbar-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
+/* ============ 按钮(Fluent) ============ */
 .nf-btn {
-  background: var(--bg3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
   padding: 5px 12px;
   font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s;
   white-space: nowrap;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease),
+    border-color 0.15s var(--ease), box-shadow 0.15s var(--ease), transform 0.08s var(--ease);
 }
 
 .nf-btn:hover {
-  background: #2a3c5c;
+  background: var(--bg-float);
+}
+
+.nf-btn:active {
+  background: var(--bg-raise);
+  transform: scale(0.96);
 }
 
 .nf-btn-active {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent);
+}
+
+.nf-btn-active:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .nf-btn-primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: normal;
 }
 
 .nf-btn-primary:hover {
-  background: #1d4ed8;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.nf-btn-primary:active {
+  background: var(--accent-press);
+  border-color: var(--accent-press);
 }
 
 .nf-btn-danger {
-  color: #fca5a5;
+  color: var(--danger);
 }
 
 .nf-btn-danger:hover {
-  background: rgba(239, 68, 68, 0.15);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .nf-btn-sm {
@@ -138,37 +222,261 @@ body {
 
 .nf-btn-import {
   width: 100%;
-  color: #7dd3fc;
-  border-style: dashed;
+  color: var(--accent);
+  border: 1px dashed var(--stroke-strong);
 }
 
+.nf-btn-import:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: var(--accent);
+}
+
+/* 顶栏右侧图标按钮(主题/设置/运行):统一 30x30 圆形,与深浅色切换按钮完全一致 */
+.nf-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease),
+    border-color 0.15s var(--ease), transform 0.08s var(--ease);
+}
+
+.nf-icon-btn:hover {
+  background: var(--bg-float);
+  color: var(--text);
+}
+
+.nf-icon-btn:active {
+  background: var(--bg-raise);
+  transform: scale(0.94);
+}
+
+/* 主题按钮:悬停时图标轻微旋转(与旧版行为一致) */
+.nf-icon-btn-rotate svg {
+  transition: transform 0.35s var(--ease);
+}
+
+.nf-icon-btn-rotate:hover svg {
+  transform: rotate(30deg);
+}
+
+/* 运行按钮:强调色,与普通图标按钮形成主次 */
+.nf-icon-btn-run {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.nf-icon-btn-run:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+/* ============ 自定义窗口控制(最小化/最大化/关闭, Fluent 标题栏风格) ============ */
+.nf-window-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  margin-right: -14px; /* 抵消工具栏 padding,贴紧窗口右缘 */
+}
+
+.nf-win-btn {
+  width: 46px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+.nf-win-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.nf-win-btn:active {
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+/* 关闭按钮:悬停红色(与 Windows 原生行为一致) */
+.nf-win-btn-close:hover,
+.nf-win-btn-close:active {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* ============ 菜单栏(VSCode 风格) ============ */
+.nf-menubar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+  z-index: 2001;
+}
+
+.nf-menu-wrap {
+  position: relative;
+}
+
+.nf-menubar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 11px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.12s var(--ease);
+}
+
+.nf-menubar-btn:hover,
+.nf-menubar-btn-open {
+  background: var(--bg-float);
+}
+
+/* 点击菜单外任意位置关闭下拉 */
+.nf-menubar-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+}
+
+.nf-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 216px;
+  background: var(--bg-surface);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-m);
+  padding: 6px;
+  box-shadow: var(--shadow-float);
+  z-index: 2002;
+  animation: nf-menu-in 0.14s var(--ease);
+}
+
+.nf-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.1s var(--ease);
+}
+
+.nf-dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.nf-dropdown-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+}
+
+.nf-dropdown-item:hover .nf-dropdown-icon {
+  color: var(--accent);
+}
+
+.nf-dropdown-label {
+  flex: 1;
+}
+
+.nf-dropdown-shortcut {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.nf-dropdown-sep {
+  height: 1px;
+  background: var(--stroke);
+  margin: 4px 6px;
+}
+
+.nf-dropdown-danger {
+  color: var(--danger);
+}
+
+.nf-dropdown-danger .nf-dropdown-icon {
+  color: var(--danger);
+}
+
+.nf-dropdown-danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.nf-dropdown-danger:hover .nf-dropdown-icon {
+  color: var(--danger);
+}
+
+/* ============ 复选框 ============ */
 .nf-check {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   color: var(--text-dim);
+  font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition: color 0.15s var(--ease);
+}
+
+.nf-check:hover {
+  color: var(--text);
+}
+
+.nf-check input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .nf-warn {
-  color: #fbbf24;
+  color: var(--warn);
   font-size: 12px;
 }
 
 .nf-stat {
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: 12px;
 }
 
 .nf-kbd {
-  background: var(--bg3);
-  border: 1px solid var(--border);
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke-strong);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 1px 6px;
   font-size: 11px;
-  color: #cbd5e1;
+  color: var(--text-dim);
 }
 
 /* ============ 主区域 ============ */
@@ -184,22 +492,24 @@ body {
   position: relative;
 }
 
+/* ============ 属性面板 ============ */
 .nf-props {
   width: 300px;
   flex-shrink: 0;
-  background: var(--bg1);
-  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-left: 1px solid var(--stroke);
   overflow-y: auto;
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 
 .nf-props-empty {
   padding: 24px 20px;
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .nf-props-empty-title {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text);
   margin-bottom: 12px;
 }
@@ -222,7 +532,7 @@ body {
 
 .nf-props-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: normal;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -238,24 +548,27 @@ body {
   color: var(--text-dim);
   line-height: 1.6;
   padding: 8px 10px;
-  background: var(--bg2);
-  border-radius: 6px;
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
   margin-bottom: 10px;
 }
 
 .nf-props-section {
   margin-bottom: 12px;
   padding: 8px 10px;
-  background: var(--bg2);
-  border-radius: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 
 .nf-props-section-title {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim);
+  font-weight: normal;
+  color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
   margin-bottom: 8px;
 }
 
@@ -272,11 +585,57 @@ body {
 
 .nf-param-help {
   font-size: 10px;
-  color: #64748b;
+  color: var(--text-faint);
   margin-top: 2px;
 }
 
-/* 聚合点编辑器(逐点 x/y/大小/形状/颜色) */
+/* ============ 输入控件 ============ */
+.nf-param-row input[type='text'],
+.nf-param-row input[type='number'],
+.nf-param-row select,
+.nf-param-row textarea,
+.nf-menu-search,
+.nf-point-fields input[type='number'],
+.nf-point-fields select {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-s);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.nf-param-row input[type='text']:hover,
+.nf-param-row input[type='number']:hover,
+.nf-param-row select:hover,
+.nf-param-row textarea:hover,
+.nf-menu-search:hover,
+.nf-point-fields input[type='number']:hover,
+.nf-point-fields select:hover {
+  border-color: var(--stroke-strong);
+  background: var(--bg-raise);
+}
+
+.nf-param-row input:focus,
+.nf-param-row select:focus,
+.nf-param-row textarea:focus,
+.nf-menu-search:focus,
+.nf-point-fields input:focus,
+.nf-point-fields select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-glow);
+}
+
+.nf-param-row textarea {
+  resize: vertical;
+  font-family: var(--mono);
+}
+
+/* ============ 聚合点编辑器 ============ */
 .nf-points-editor {
   display: flex;
   flex-direction: column;
@@ -287,9 +646,9 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 4px;
-  background: var(--bg1);
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
   padding: 6px;
 }
 
@@ -303,7 +662,7 @@ body {
 
 .nf-point-fields label {
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   white-space: nowrap;
 }
 
@@ -311,29 +670,18 @@ body {
 .nf-point-fields select {
   width: 100%;
   min-width: 0;
-  background: var(--bg0);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
   padding: 2px 5px;
   font-size: 11px;
-  font-family: inherit;
 }
 
 .nf-point-fields input[type='color'] {
   width: 100%;
   height: 22px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-s);
   background: none;
   cursor: pointer;
-}
-
-.nf-point-fields input:focus,
-.nf-point-fields select:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 .nf-point-del {
@@ -344,50 +692,24 @@ body {
   align-items: center;
   justify-content: center;
   background: transparent;
-  color: #94a3b8;
+  color: var(--text-faint);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   font-size: 11px;
   cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
 .nf-point-del:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
 }
 
 .nf-point-add {
   align-self: flex-start;
 }
 
-.nf-param-row input[type='text'],
-.nf-param-row input[type='number'],
-.nf-param-row select,
-.nf-param-row textarea,
-.nf-menu-search {
-  width: 100%;
-  background: var(--bg0);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: inherit;
-}
-
-.nf-param-row input:focus,
-.nf-param-row select:focus,
-.nf-param-row textarea:focus,
-.nf-menu-search:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.nf-param-row textarea {
-  resize: vertical;
-  font-family: Consolas, monospace;
-}
-
+/* ============ range / color ============ */
 .nf-range-row {
   display: flex;
   align-items: center;
@@ -396,6 +718,7 @@ body {
 
 .nf-range-row input[type='range'] {
   flex: 1;
+  accent-color: var(--accent);
 }
 
 .nf-range-val {
@@ -403,7 +726,7 @@ body {
   color: var(--text-dim);
   min-width: 42px;
   text-align: right;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
 }
 
 .nf-color-row {
@@ -414,9 +737,9 @@ body {
 .nf-color-row input[type='color'] {
   width: 36px;
   height: 28px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--stroke-strong);
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 
@@ -441,25 +764,25 @@ body {
 }
 
 .nf-out-type {
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: 10px;
   width: 62px;
 }
 
 .nf-out-val {
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 11px;
   margin-left: auto;
   text-align: right;
 }
 
 .nf-out-ok {
-  color: #34d399;
+  color: var(--success);
 }
 
 .nf-node-error-text {
   margin-top: 6px;
-  color: #f87171;
+  color: var(--danger);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -469,20 +792,77 @@ body {
   gap: 6px;
 }
 
-/* ============ 节点 ============ */
-.nf-node {
-  background: var(--bg3);
-  border: 1px solid #3b4c6e;
-  border-radius: 10px;
+/* ============ 暴露参数按钮 ============ */
+.nf-param-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.nf-param-head .nf-param-label {
+  margin-bottom: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nf-expose-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--stroke-strong);
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+.nf-expose-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.nf-expose-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+
+.nf-expose-on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.nf-expose-on .nf-expose-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ============================================================
+   节点(零动画!) —— 不设任何 transition/animation/transform,
+   保证节点拖拽、框选、大规模布局操作极致顺畅
+   ============================================================ */
+.nf-node {
+  background: var(--bg-node);
+  border: 2px solid var(--stroke-strong);
+  border-radius: var(--radius-m);
+  overflow: visible;
   font-size: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .nf-node.nf-selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35), 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-glow);
 }
 
 .nf-node-header {
@@ -490,13 +870,25 @@ body {
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  border-bottom: 1px solid;
+  border-bottom: 1px solid var(--stroke);
   position: relative;
   cursor: grab;
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
 }
 
 .nf-node-header:active {
   cursor: grabbing;
+}
+
+/* 顶栏纯色背景 → 图标/标题/折叠指示一律白字 */
+.nf-node-header .nf-cat-icon,
+.nf-node-header .nf-node-title,
+.nf-node-header .nf-collapse-ind {
+  color: #fff;
+}
+
+.nf-node-header .nf-collapse-ind {
+  opacity: 0.85;
 }
 
 .nf-cat-icon {
@@ -506,7 +898,7 @@ body {
 }
 
 .nf-node-title {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text);
   font-size: 12px;
   overflow: hidden;
@@ -525,11 +917,35 @@ body {
   background: var(--danger);
   color: #fff;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .nf-node-body {
   padding: 8px 12px 10px;
+  /* 缩放隐藏/恢复文字时的平滑过渡(仅 opacity,不影响拖拽性能) */
+  transition: opacity 0.18s var(--ease);
+}
+
+/* 文字/图表层的隐现平滑过渡 */
+.nf-node-body .nf-socket-name,
+.nf-node-body .nf-socket-type,
+.nf-node-body .nf-param-line,
+.nf-node-body .nf-outputs-line,
+.nf-node-body .nf-viewer,
+.nf-node-body .nf-socket-empty {
+  transition: opacity 0.18s var(--ease);
+}
+
+/* 缩放到一定程度后隐藏节点内部文字与图表,但保留端口(连线的圆角矩形):
+   端口行与 Handle 继续可见、可交互,便于缩小后仍能看清连线去向 */
+.nf-node-body.nf-zoom-min .nf-socket-name,
+.nf-node-body.nf-zoom-min .nf-socket-type,
+.nf-node-body.nf-zoom-min .nf-param-line,
+.nf-node-body.nf-zoom-min .nf-outputs-line,
+.nf-node-body.nf-zoom-min .nf-viewer,
+.nf-node-body.nf-zoom-min .nf-socket-empty {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .nf-sockets {
@@ -567,7 +983,7 @@ body {
 }
 
 .nf-socket-name {
-  color: #cbd5e1;
+  color: #141414;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
@@ -581,15 +997,16 @@ body {
 }
 
 .nf-socket-empty {
-  color: #475569;
+  color: var(--text-faint);
   font-size: 10px;
 }
 
+/* 端口(无动画) */
 .nf-handle {
   width: 11px;
   height: 11px;
-  border-radius: 3px;
-  border: 1.5px solid var(--bg0);
+  border-radius: 2px;
+  border: 1.5px solid var(--bg-surface);
 }
 
 .nf-handle.react-flow__handle-left {
@@ -601,24 +1018,26 @@ body {
 }
 
 .nf-handle:hover {
-  /* 悬停时仅高亮边框,接口大小保持不变 */
   border-color: var(--accent);
 }
 
-/* 折叠节点:仅显示接口与标题栏,隐藏接口文字 */
+/* 折叠节点 */
 .nf-node-collapsed .nf-socket-name,
 .nf-node-collapsed .nf-socket-type {
   display: none;
 }
+
 .nf-node-collapsed .nf-node-body {
   padding: 6px 12px 8px;
 }
+
 .nf-node-collapsed .nf-sockets-col {
   justify-content: center;
 }
+
 .nf-collapse-ind {
   margin-left: auto;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: 10px;
   flex-shrink: 0;
 }
@@ -626,86 +1045,66 @@ body {
 /* 暴露参数输入口 */
 .nf-socket-exposed .nf-handle-exp {
   border-radius: 50%;
-  border: 1.5px solid var(--bg0);
-}
-.nf-socket-exposed .nf-socket-name {
-  color: #94a3b8;
+  border: 1.5px solid var(--bg-surface);
 }
 
-/* 暴露参数按钮(侧边栏,位于参数标签右端的小圆钮) */
-.nf-param-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-bottom: 3px;
-}
-.nf-param-head .nf-param-label {
-  margin-bottom: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.nf-expose-btn {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid #3b4c6e;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.nf-expose-btn:hover {
-  color: #c4b5fd;
-  border-color: var(--accent);
-}
-.nf-expose-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-}
-.nf-expose-on {
-  background: rgba(139, 92, 246, 0.22);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.nf-expose-on .nf-expose-dot {
-  background: var(--accent);
-  border-color: var(--accent);
+.nf-socket-exposed .nf-socket-name {
+  color: var(--text-faint);
 }
 
 .nf-param-line {
   margin-top: 7px;
   padding: 3px 6px;
-  background: var(--bg2);
-  border-radius: 4px;
+  background: var(--bg-raise);
+  border-radius: var(--radius-s);
   font-size: 10px;
-  color: var(--text-dim);
+  color: #333;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
 }
 
+/* ============ 查看器 ============ */
 .nf-viewer {
   margin-top: 8px;
   position: relative;
-  border: 1px solid #26344f;
-  border-radius: 7px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
   overflow: hidden;
-  background: var(--bg0);
+  background: var(--bg-surface);
 }
 
 .nf-chart {
   width: 100%;
   height: 230px;
+}
+
+/* 查看器预览:滚轮缩放(等比 transform,放大时溢出裁剪,模拟图片查看器) */
+.nf-chart-wrap {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 230px;
+}
+
+/* 仅图表本身缩放;预览窗其它元素(工具栏/标题)不随滚轮缩放 */
+.nf-chart-scale {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center center;
+  transition: transform 0.16s var(--ease);
+  will-change: transform;
+}
+
+.nf-zoom-hint {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--mono);
+  margin-right: auto;
 }
 
 .nf-canvas {
@@ -724,19 +1123,20 @@ body {
   width: 100%;
 }
 
-/* 预览图下方导出按钮 */
 .nf-viewer-actions {
   display: flex;
   justify-content: flex-end;
   padding: 6px 8px;
-  background: var(--bg2);
-  border-top: 1px solid #26344f;
+  background: var(--bg-raise);
+  border-top: 1px solid var(--stroke);
 }
+
 .nf-export-btn {
-  color: #7dd3fc;
+  color: var(--accent);
 }
+
 .nf-export-btn:hover {
-  background: rgba(125, 211, 252, 0.12);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .nf-output-table {
@@ -754,7 +1154,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -764,9 +1164,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 12px;
-  background: rgba(11, 18, 32, 0.72);
+  background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
   pointer-events: none;
 }
 
@@ -776,25 +1176,25 @@ body {
   align-items: center;
   gap: 5px;
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--text-faint);
 }
 
 .nf-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #475569;
+  background: var(--text-faint);
 }
 
 .nf-dot-on {
-  background: #34d399;
+  background: var(--success);
 }
 
 .nf-error {
   padding: 5px 10px;
-  background: rgba(239, 68, 68, 0.12);
-  border-top: 1px solid rgba(239, 68, 68, 0.3);
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  color: var(--danger);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -806,23 +1206,35 @@ body {
   z-index: 999;
 }
 
+@keyframes nf-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
 .nf-menu {
   position: fixed;
   z-index: 1000;
-  background: rgba(15, 23, 42, 0.97);
-  border: 1px solid #33446a;
-  border-radius: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-m);
   padding: 8px;
   min-width: 340px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-float);
+  animation: nf-menu-in 0.16s var(--ease);
 }
 
 .nf-menu-title {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--text-dim);
+  font-weight: normal;
+  color: var(--text-faint);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
   padding: 2px 4px 6px;
 }
 
@@ -835,26 +1247,32 @@ body {
   gap: 6px;
   padding-bottom: 8px;
   margin-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--stroke);
 }
 
 .nf-menu-action {
   flex: 1;
-  background: var(--bg3);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid var(--stroke-strong);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   padding: 5px 8px;
   font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
+  transition: background-color 0.15s var(--ease);
 }
 
 .nf-menu-action:hover {
-  background: #2a3c5c;
+  background: var(--bg-float);
 }
 
 .nf-menu-action-danger {
-  color: #fca5a5;
+  color: var(--danger);
+}
+
+.nf-menu-action-danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .nf-menu-body {
@@ -865,7 +1283,7 @@ body {
 .nf-menu-cats {
   width: 132px;
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--stroke);
   padding-right: 4px;
 }
 
@@ -874,15 +1292,16 @@ body {
   align-items: center;
   gap: 6px;
   padding: 7px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
+  transition: background-color 0.12s var(--ease);
 }
 
 .nf-menu-cat:hover,
 .nf-menu-cat-active {
-  background: rgba(139, 92, 246, 0.18);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .nf-menu-items {
@@ -901,13 +1320,14 @@ body {
   align-items: center;
   gap: 7px;
   padding: 7px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   cursor: pointer;
   font-size: 12px;
+  transition: background-color 0.12s var(--ease);
 }
 
 .nf-menu-item:hover {
-  background: #25334f;
+  background: var(--bg-float);
 }
 
 .nf-cat-dot {
@@ -923,21 +1343,21 @@ body {
 }
 
 .nf-menu-item-cat {
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-size: 10px;
 }
 
 .nf-menu-empty {
   padding: 12px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   text-align: center;
 }
 
 .nf-menu-hint {
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px solid var(--border);
-  color: #64748b;
+  border-top: 1px solid var(--stroke);
+  color: var(--text-faint);
   font-size: 10px;
   text-align: right;
 }
@@ -946,31 +1366,52 @@ body {
 .nf-inspector {
   height: 190px;
   flex-shrink: 0;
-  background: var(--bg1);
-  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--stroke);
   display: flex;
   flex-direction: column;
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 
 .nf-inspector-tabs {
   display: flex;
-  gap: 2px;
-  padding: 4px 8px 0;
+  gap: 4px;
+  padding: 6px 12px 0;
+  position: relative;
 }
 
 .nf-inspector-tab {
   background: transparent;
   border: none;
-  color: var(--text-dim);
+  color: var(--text-faint);
   padding: 6px 14px;
   font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-s) var(--radius-s) 0 0;
+  position: relative;
+  transition: color 0.15s var(--ease), background-color 0.15s var(--ease);
+}
+
+.nf-inspector-tab:hover {
+  background: var(--bg-raise);
+  color: var(--text);
 }
 
 .nf-inspector-tab-active {
-  background: var(--bg2);
-  color: var(--text);
+  color: var(--accent);
+}
+
+/* Fluent 标签页:选中项底部强调色指示条 */
+.nf-inspector-tab-active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .nf-log-badge {
@@ -985,24 +1426,26 @@ body {
   background: var(--danger);
   color: #fff;
   font-size: 10px;
+  font-weight: normal;
 }
 
 .nf-inspector-body {
   flex: 1;
   overflow: auto;
   padding: 8px 12px;
-  background: var(--bg2);
+  background: var(--bg-raise);
+  transition: background-color 0.3s var(--ease);
 }
 
 .nf-inspector-hint {
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 12px;
   padding: 10px 0;
 }
 
 .nf-inspector-title {
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   margin-bottom: 8px;
 }
 
@@ -1012,8 +1455,8 @@ body {
 
 .nf-inspector-block-title {
   font-size: 10px;
-  color: #7c8db5;
-  font-family: Consolas, monospace;
+  color: var(--text-faint);
+  font-family: var(--mono);
   margin-bottom: 4px;
 }
 
@@ -1029,21 +1472,21 @@ body {
 
 .nf-table th,
 .nf-table td {
-  border: 1px solid #26344f;
+  border: 1px solid var(--stroke);
   padding: 2px 8px;
   text-align: left;
   white-space: nowrap;
 }
 
 .nf-table th {
-  background: var(--bg3);
+  background: var(--bg-float);
   color: var(--text-dim);
   position: sticky;
   top: 0;
 }
 
 .nf-table-more {
-  color: #64748b;
+  color: var(--text-faint);
   font-size: 10px;
   padding: 3px 0;
 }
@@ -1055,7 +1498,7 @@ body {
 }
 
 .nf-inspector-log {
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
   font-size: 11px;
 }
 
@@ -1065,22 +1508,22 @@ body {
 }
 
 .nf-log-time {
-  color: #64748b;
+  color: var(--text-faint);
   margin-right: 6px;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
 }
 
 .nf-log-sep {
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed var(--stroke-strong);
   margin: 6px 0;
 }
 
 .nf-log-error {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .nf-log-ok {
-  color: #34d399;
+  color: var(--success);
 }
 
 /* ============ 状态栏 ============ */
@@ -1090,43 +1533,54 @@ body {
   gap: 16px;
   height: 26px;
   padding: 0 12px;
-  background: var(--bg1);
-  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--stroke);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   flex-shrink: 0;
   user-select: none;
+  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
 }
 
 .nf-status-right {
   margin-left: auto;
 }
 
-/* ============ React Flow 覆盖 ============ */
+/* ============================================================
+   React Flow 覆盖(连线/画布不设动画;配色随主题变量联动)
+   ============================================================ */
 .react-flow {
-  background: var(--bg0);
+  background: var(--bg-canvas);
+  transition: background-color 0.3s var(--ease);
 }
 
 .react-flow__controls {
-  border-radius: 8px;
+  border-radius: var(--radius-m);
   overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--stroke);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.3s var(--ease);
 }
 
 .react-flow__controls button {
-  background: var(--bg3);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--stroke);
   color: var(--text);
   width: 28px;
   height: 28px;
+  transition: background-color 0.15s var(--ease);
 }
 
 .react-flow__controls button:hover {
-  background: #2a3c5c;
+  background: var(--bg-float);
 }
 
 .react-flow__controls button svg {
   fill: var(--text);
+}
+
+.react-flow__edge path {
+  transition: stroke 0.15s var(--ease);
 }
 
 .react-flow__edge.selected path {
@@ -1134,23 +1588,29 @@ body {
 }
 
 .react-flow__edge:hover path {
-  stroke: #c4b5fd;
+  stroke: var(--accent);
 }
 
 .react-flow__minimap {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  transition: border-color 0.3s var(--ease);
 }
 
 .react-flow__node.selected .nf-node {
   border-color: var(--accent);
 }
 
-/* 光标规则:仅节点可拖拽区域(标题栏)为手形,其余区域保持默认光标 */
 .react-flow__node,
 .react-flow__node.draggable {
   cursor: default;
+}
+
+/* 连线选中/悬浮时保持原有(选中瞬变,不引入动画) */
+.react-flow__edge {
+  will-change: d, stroke;
 }
 
 .nf-mini-node {
@@ -1159,20 +1619,344 @@ body {
   border-radius: 2px;
 }
 
+/* ============ Fluent 滚动条 ============ */
 ::-webkit-scrollbar {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg1);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 5px;
+  background: var(--stroke-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--text-faint);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ============ 杂项 ============ */
+input[type='number']::-webkit-inner-spin-button {
+  opacity: 0.4;
+}
+
+select {
+  cursor: pointer;
+}
+
+select option {
+  background: var(--bg-surface);
+  color: var(--text);
+}
+
+/* ---- 暗色主题:节点内文字恢复浅色 ---- */
+[data-theme='dark'] .nf-node .nf-socket-name {
+  color: var(--text-dim);
+}
+
+[data-theme='dark'] .nf-node .nf-param-line {
+  color: var(--text-faint);
+}
+
+/* 暗色主题:顶栏为提亮后的纯色,白字加阴影增强可读性 */
+[data-theme='dark'] .nf-node-header .nf-cat-icon,
+[data-theme='dark'] .nf-node-header .nf-node-title,
+[data-theme='dark'] .nf-node-header .nf-collapse-ind {
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ---- Ctrl 切断标记:划过并切断连线时的短暂反馈 ---- */
+.nf-cut-flash {
+  position: fixed;
+  transform: translate(-50%, -50%) scale(0.6);
+  width: 20px;
+  height: 20px;
+  z-index: 1000;
+  pointer-events: none;
+  animation: nf-cut-flash 0.42s var(--ease) forwards;
+}
+
+.nf-cut-flash::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--danger);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+@keyframes nf-cut-flash {
+  0% {
+    transform: translate(-50%, -50%) scale(0.6);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* ---- Shift 拖拽插入点预览 ---- */
+.nf-insert-preview {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.nf-insert-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2.5px solid var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 103, 192, 0.22), 0 0 10px rgba(0, 103, 192, 0.55);
+}
+
+.nf-insert-label {
+  font-size: 10px;
+  color: #fff;
+  background: var(--accent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ============ 设置弹窗(VSCode 风格) ============ */
+.nf-settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: nf-fade-in 0.18s var(--ease);
+}
+
+@keyframes nf-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.nf-settings {
+  width: 620px;
+  max-width: calc(100vw - 80px);
+  max-height: calc(100vh - 140px);
+  background: var(--bg-surface);
+  border: 1px solid var(--stroke-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: nf-menu-in 0.18s var(--ease);
+}
+
+.nf-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.nf-settings-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: normal;
+  color: var(--text);
+}
+
+.nf-settings-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.nf-settings-close:hover {
+  background: var(--bg-float);
+  color: var(--text);
+}
+
+.nf-settings-body {
+  display: flex;
+  min-height: 240px;
+  overflow: hidden;
+}
+
+.nf-settings-nav {
+  width: 152px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--stroke);
+  padding: 10px 8px;
+}
+
+.nf-settings-nav-item {
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.nf-settings-nav-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.nf-settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.nf-settings-section-title {
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-faint);
+  margin: 0 0 4px;
+}
+
+.nf-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.nf-settings-row:last-child {
+  border-bottom: none;
+}
+
+.nf-settings-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nf-settings-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.nf-settings-desc {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.nf-settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--stroke);
+}
+
+.nf-settings-foot-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-right: auto;
+}
+
+/* Fluent 风格开关 */
+.nf-switch {
+  position: relative;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke-strong);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+
+.nf-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: transform 0.2s var(--ease), background-color 0.2s var(--ease);
+}
+
+.nf-switch-on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.nf-switch-on .nf-switch-thumb {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+/* 分段控件(主题选择) */
+.nf-segmented {
+  display: inline-flex;
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-s);
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.nf-seg-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 14px;
+  border-radius: calc(var(--radius-s) - 1px);
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.nf-seg-btn:hover {
+  color: var(--text);
+}
+
+.nf-seg-active {
+  background: var(--bg-surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }

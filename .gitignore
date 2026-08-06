@@ -6,3 +6,4 @@ src-tauri/gen
 *.local
 .DS_Store
 syphon_V*.exe
+Syphon_*.exe

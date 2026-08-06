@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import { useGraph } from './store/useGraph';
 import { runGraph } from './nodes/execEngine';
+import { useSettings } from './utils/settings';
 import NodeCanvas from './ui/NodeCanvas';
 import ContextMenu from './ui/ContextMenu';
 import Toolbar from './ui/Toolbar';
 import PropertiesPanel from './ui/PropertiesPanel';
 import Inspector from './ui/Inspector';
 import StatusBar from './ui/StatusBar';
+import SettingsPanel from './ui/SettingsPanel';
 import './styles.css';
 
 function AppInner() {
@@ -31,8 +33,31 @@ function AppInner() {
     nodeId?: string;
   } | null>(null);
   const [boxSelect, setBoxSelect] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const bootstrapped = useRef(false);
   const mouseRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+
+  // 启动时从配置文件恢复设置偏好(自动执行 / 主题等)
+  useEffect(() => {
+    useSettings.getState().init();
+  }, []);
+
+  // 设置 → 主题:应用到界面并保持与旧版 localStorage 键的兼容
+  const settingsTheme = useSettings((s) => s.theme);
+  useEffect(() => {
+    document.documentElement.dataset.theme = settingsTheme;
+    try {
+      localStorage.setItem('syphon-theme', settingsTheme);
+    } catch {
+      /* ignore */
+    }
+  }, [settingsTheme]);
+
+  // 设置 → 自动执行:同步到图数据流 store,保证执行引擎与设置面板一致
+  const settingsAutoRun = useSettings((s) => s.autoRun);
+  useEffect(() => {
+    useGraph.setState({ autoRun: settingsAutoRun });
+  }, [settingsAutoRun]);
 
   // 初始化示例场景(表格→散点→原理化输出 / 网格→原理化 / 表格→预制图)
   useEffect(() => {
@@ -134,7 +159,7 @@ function AppInner() {
 
   return (
     <div className="nf-app">
-      <Toolbar boxSelect={boxSelect} setBoxSelect={setBoxSelect} />
+      <Toolbar boxSelect={boxSelect} setBoxSelect={setBoxSelect} onOpenSettings={() => setSettingsOpen(true)} />
       <div className="nf-main">
         <NodeCanvas onOpenMenu={openMenu} boxSelect={boxSelect} />
         <PropertiesPanel />
@@ -150,6 +175,7 @@ function AppInner() {
           onClose={() => setMenu(null)}
         />
       )}
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

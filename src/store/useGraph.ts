@@ -312,21 +312,40 @@ export const useGraph = create<GraphState>((set, get) => ({
       const data = JSON.parse(json);
       if (!data || data.format !== 'syphon-graph' || !Array.isArray(data.nodes)) return false;
       get().snapshotNow();
-      const nodes: GraphNode[] = data.nodes.map((n: Record<string, unknown>) => ({
-        id: String(n.id),
-        type: 'graph',
-        position: {
-          x: Number((n.position as { x?: number })?.x ?? 0),
-          y: Number((n.position as { y?: number })?.y ?? 0),
-        },
-        data: {
-          configId: String(n.configId),
-          params: n.params && typeof n.params === 'object' ? (n.params as Record<string, unknown>) : {},
-          exposed: Array.isArray(n.exposed) ? n.exposed.map(String) : [],
-          collapsed: !!n.collapsed,
-        },
-        style: { width: nodeWidth(String(n.configId)) },
-      }));
+      // 旧版本"预制可视化"节点 → 对应独立图表节点
+      const VIZ_MAP: Record<string, string> = {
+        scatter: 'viz_scatter',
+        line: 'viz_line',
+        bar: 'viz_bar',
+        volcano: 'viz_volcano',
+        heatmap: 'viz_heatmap',
+        box: 'viz_box',
+        violin: 'viz_violin',
+        sankey: 'viz_sankey',
+        graph: 'viz_graph',
+      };
+      const nodes: GraphNode[] = data.nodes.map((n: Record<string, unknown>) => {
+        const rawId = String(n.configId);
+        const configId =
+          rawId === 'viz_preset'
+            ? VIZ_MAP[String((n.params as Record<string, unknown> | undefined)?.chartType ?? 'scatter')] ?? 'viz_scatter'
+            : rawId;
+        return {
+          id: String(n.id),
+          type: 'graph',
+          position: {
+            x: Number((n.position as { x?: number })?.x ?? 0),
+            y: Number((n.position as { y?: number })?.y ?? 0),
+          },
+          data: {
+            configId,
+            params: n.params && typeof n.params === 'object' ? (n.params as Record<string, unknown>) : {},
+            exposed: Array.isArray(n.exposed) ? n.exposed.map(String) : [],
+            collapsed: !!n.collapsed,
+          },
+          style: { width: nodeWidth(configId) },
+        };
+      });
       const edges: Edge[] = (Array.isArray(data.edges) ? data.edges : []).map((e: Record<string, unknown>) => {
         const conn: Connection = {
           source: String(e.source),

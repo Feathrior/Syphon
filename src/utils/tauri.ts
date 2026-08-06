@@ -1,5 +1,5 @@
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { readFile, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { readFile, readTextFile, writeFile, writeTextFile } from '@tauri-apps/plugin-fs';
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -125,6 +125,39 @@ export async function saveTextFile(content: string, defaultName: string): Promis
     return true;
   } catch (err) {
     console.error('保存文件失败:', err);
+    return false;
+  }
+}
+
+// 保存 PNG 图片:桌面端弹出"另存为"对话框并写入二进制;浏览器端回退为 Blob 下载
+export async function savePngFile(dataUrl: string, defaultName: string): Promise<boolean> {
+  if (!isTauri()) {
+    return new Promise((resolve) => {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = defaultName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      resolve(true);
+    });
+  }
+  try {
+    const path = await save({
+      defaultPath: defaultName,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (!path) return false;
+    // dataURL(base64) → Uint8Array
+    const comma = dataUrl.indexOf(',');
+    const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    await writeFile(path, bytes);
+    return true;
+  } catch (err) {
+    console.error('保存 PNG 失败:', err);
     return false;
   }
 }

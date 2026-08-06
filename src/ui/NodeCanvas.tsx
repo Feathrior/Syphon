@@ -6,6 +6,8 @@ import {
   MiniMap,
   ReactFlow,
   SelectionMode,
+  useReactFlow,
+  useStore,
 } from '@xyflow/react';
 import type { Connection, Edge, IsValidConnection, NodeMouseHandler, OnNodeDrag } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -42,17 +44,6 @@ function nodeCenter(n: GraphNode): { x: number; y: number } {
   return { x: n.position.x + w / 2, y: n.position.y + h / 2 };
 }
 
-/** 点到线段距离 */
-function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  if (len2 === 0) return Math.hypot(px - ax, py - ay);
-  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-}
-
 export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const nodes = useGraph((s) => s.nodes);
   const edges = useGraph((s) => s.edges);
@@ -65,11 +56,21 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const addLog = useGraph((s) => s.addLog);
   // 记录本次连线会话中已上报过的非法连接,避免重复刷日志
   const invalidRef = useRef<Set<string>>(new Set());
+  // 画布容器引用:用于捕获滚轮事件(节点区域不缩放画布)
+  const wrapRef = useRef<HTMLDivElement>(null);
   // Ctrl 切断("切水果"):按住 Ctrl 并按住鼠标左键划过连线即可断开
   const [ctrlDown, setCtrlDown] = useState(false);
   const cutSeenRef = useRef<Set<string>>(new Set());
   // Shift+拖拽插入:实时高亮将被切断(插入)的连线
   const [cutHighlight, setCutHighlight] = useState<string | null>(null);
+  // Shift+拖拽插入:插入点预览(屏幕坐标)
+  const [insertPreview, setInsertPreview] = useState<{ x: number; y: number } | null>(null);
+  // Ctrl 切断:鼠标悬停到的连线(将被划断,实时高亮提示)
+  const [hoverEdge, setHoverEdge] = useState<string | null>(null);
+  // Ctrl 切断:已切断处短暂标记(划过操作的清晰反馈)
+  const [cutFlash, setCutFlash] = useState<{ x: number; y: number; key: number }[]>([]);
+  // 画布 transform:用于 zoom 换算与流坐标→屏幕坐标
+  const [viewTx, viewTy, viewZoom] = useStore((s) => s.transform);
 
   useEffect(() => {
     const dn = (e: KeyboardEvent) => {
@@ -79,7 +80,10 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'Control') setCtrlDown(false);
+      if (e.key === 'Control') {
+        setCtrlDown(false);
+        setHoverEdge(null);
+      }
     };
     window.addEventListener('keydown', dn);
     window.addEventListener('keyup', up);
@@ -89,7 +93,26 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     };
   }, []);
 
-  // Ctrl+拖动划过连线 → 切断(切水果:按住 Ctrl 并按住鼠标左键横扫)
+  // Ctrl+滚轮缩放:画布区域交给 React Flow(zoomOnScroll=false + zoomActivationKeyCode="Control");
+  // 画布之外的区域(顶栏/属性面板/底部检查器等)由本监听接管,保证"任意位置 Ctrl+滚轮都能整体缩放"
+  const { zoomTo, getViewport } = useReactFlow();
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      // 画布内部由 React Flow 自己处理(避免重复缩放);这里只接管画布之外的区域
+      const t = e.target as Element | null;
+      if (t && t.closest('.react-flow__pane')) return;
+      e.preventDefault();
+      // 与 React Flow 滚轮缩放完全一致的缩放比例:scale *= 2^(-deltaY*0.002)
+      const factor = Math.pow(2, -e.deltaY * 0.002);
+      zoomTo(getViewport().zoom * factor);
+    };
+    const opts = { passive: false } as AddEventListenerOptions;
+    window.addEventListener('wheel', onWheel, opts);
+    return () => window.removeEventListener('wheel', onWheel, opts);
+  }, [zoomTo, getViewport]);
+
+  // Ctrl+拖动划过连线 → 切断:悬停时实时高亮目标连线,划过切断并给出短暂标记
   useEffect(() => {
     const cutAt = (x: number, y: number) => {
       const el = document.elementFromPoint(x, y);
@@ -100,12 +123,35 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       cutSeenRef.current.add(id);
       applyEdgeChanges([{ type: 'remove', id }]);
       addLog('info', 'Ctrl 切断:已断开一条连线');
+      // 切断处短暂标记:清晰的"划过"反馈(红色斜切标记,快速扩散淡出)
+      const key = Date.now() + Math.random();
+      setCutFlash((f) => [...f, { x, y, key }]);
+      window.setTimeout(() => setCutFlash((f) => f.filter((it) => it.key !== key)), 420);
     };
     const mv = (e: MouseEvent) => {
-      if (e.ctrlKey && (e.buttons & 1)) cutAt(e.clientX, e.clientY);
+      if (!e.ctrlKey) {
+        setHoverEdge(null);
+        return;
+      }
+      // 悬停高亮:鼠标所在连线即"将要被划断"的目标
+      const el = e.target as Element | null;
+      const edgeEl = el?.closest?.('.react-flow__edge') as HTMLElement | null;
+      setHoverEdge(edgeEl?.getAttribute('data-id') ?? null);
+      if (!(e.buttons & 1)) return;
+      cutAt(e.clientX, e.clientY);
+    };
+    const mu = () => setHoverEdge(null);
+    const kd = (e: KeyboardEvent) => {
+      if (e.key === 'Control') setCtrlDown(true);
     };
     window.addEventListener('mousemove', mv);
-    return () => window.removeEventListener('mousemove', mv);
+    window.addEventListener('mouseup', mu);
+    window.addEventListener('keydown', kd);
+    return () => {
+      window.removeEventListener('mousemove', mv);
+      window.removeEventListener('mouseup', mu);
+      window.removeEventListener('keydown', kd);
+    };
   }, [applyEdgeChanges, addLog]);
 
   const isValidConnection: IsValidConnection = useMemo(() => {
@@ -152,10 +198,49 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     if (e.ctrlKey) {
       applyEdgeChanges([{ type: 'remove', id: edge.id }]);
       addLog('info', `Ctrl 切断:${edge.source} → ${edge.target}`);
+      const key = Date.now() + Math.random();
+      setCutFlash((f) => [...f, { x: e.clientX, y: e.clientY, key }]);
+      window.setTimeout(() => setCutFlash((f) => f.filter((it) => it.key !== key)), 420);
     }
   };
 
-  // Shift+拖拽节点 → 融入连线中间(拆分连线)。拖拽过程中实时高亮将被切断(插入)的连线
+  // Shift+拖拽节点 → 融入连线中间(拆分连线)。拖拽过程中实时高亮将被切断(插入)的连线并预览插入点
+  const HIT = 46 / viewZoom; // 命中距离按缩放换算,保证各缩放级别下都容易命中
+
+  // 贝塞尔曲线路径缓存(键:edge id → 解析后的 SVGPathElement),避免拖拽每帧重复解析
+  const pathCacheRef = useRef<Map<string, { el: SVGPathElement; d: string }>>(new Map());
+
+  /** 返回鼠标点到指定连线渲染路径的最近点(与所见曲线完全重合) */
+  const closestOnEdgePath = (edgeId: string, px: number, py: number): { x: number; y: number; dist: number } | null => {
+    const el = document.querySelector<SVGPathElement>(
+      `.react-flow__edge[data-id="${CSS.escape(edgeId)}"] path`
+    );
+    if (!el) return null;
+    const d = el.getAttribute('d') ?? '';
+    if (!d) return null;
+    let cached = pathCacheRef.current.get(edgeId);
+    if (!cached || cached.d !== d) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', d);
+      cached = { el: p, d };
+      pathCacheRef.current.set(edgeId, cached);
+      if (pathCacheRef.current.size > 80) {
+        const entries = [...pathCacheRef.current.entries()];
+        pathCacheRef.current = new Map(entries.slice(-40));
+      }
+    }
+    const total = cached.el.getTotalLength();
+    if (total === 0) return null;
+    const N = 64;
+    let best = { x: px, y: py, dist: Infinity };
+    for (let i = 0; i <= N; i++) {
+      const pt = cached.el.getPointAtLength((total * i) / N);
+      const dist = Math.hypot(pt.x - px, pt.y - py);
+      if (dist < best.dist) best = { x: pt.x, y: pt.y, dist };
+    }
+    return best;
+  };
+
   const onNodeDragStart: OnNodeDrag<GraphNode> = () => {
     snapshotNow();
   };
@@ -163,37 +248,34 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const onNodeDrag: OnNodeDrag<GraphNode> = (e, node) => {
     if (!e.shiftKey) {
       setCutHighlight(null);
+      setInsertPreview(null);
       return;
     }
     const center = nodeCenter(node);
-    let best: { id: string; d: number } | null = null;
+    let best: { id: string; d: number; px: number; py: number } | null = null;
     for (const edge of edges) {
-      const s = nodes.find((n) => n.id === edge.source);
-      const t = nodes.find((n) => n.id === edge.target);
-      if (!s || !t) continue;
-      const a = nodeCenter(s);
-      const b = nodeCenter(t);
-      const d = distToSegment(center.x, center.y, a.x, a.y, b.x, b.y);
-      if (d < 40 && (!best || d < best.d)) best = { id: edge.id, d };
+      const hit = closestOnEdgePath(edge.id, center.x, center.y);
+      if (!hit || hit.dist >= HIT) continue;
+      if (!best || hit.dist < best.d) {
+        best = { id: edge.id, d: hit.dist, px: hit.x, py: hit.y };
+      }
     }
     setCutHighlight(best?.id ?? null);
+    setInsertPreview(best ? { x: best.px * viewZoom + viewTx, y: best.py * viewZoom + viewTy } : null);
   };
 
   const onNodeDragStop: OnNodeDrag<GraphNode> = (e, node) => {
     setCutHighlight(null);
+    setInsertPreview(null);
     if (!e.shiftKey) return;
     const center = nodeCenter(node);
     const nc = getConfig(node.data.configId);
     if (!nc) return;
     let best: { edge: Edge; d: number } | null = null;
     for (const edge of edges) {
-      const s = nodes.find((n) => n.id === edge.source);
-      const t = nodes.find((n) => n.id === edge.target);
-      if (!s || !t) continue;
-      const a = nodeCenter(s);
-      const b = nodeCenter(t);
-      const d = distToSegment(center.x, center.y, a.x, a.y, b.x, b.y);
-      if (d < 40 && (!best || d < best.d)) best = { edge, d };
+      const hit = closestOnEdgePath(edge.id, center.x, center.y);
+      if (!hit || hit.dist >= HIT) continue;
+      if (!best || hit.dist < best.d) best = { edge, d: hit.dist };
     }
     if (!best) return;
     const { edge } = best;
@@ -223,20 +305,25 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   };
 
   // Shift 拖拽时高亮将被切断(插入)的连线:加粗 + 亮橙 + 置顶
+  // Ctrl 划断时高亮鼠标悬停的连线:加粗 + 红色 + 置顶(清晰提示"将要被划断")
   const highlightEdges = useMemo(
-    () =>
-      cutHighlight
-        ? edges.map((e) =>
-            e.id === cutHighlight
-              ? { ...e, style: { ...e.style, stroke: '#f59e0b', strokeWidth: 5 }, zIndex: 100 }
-              : e
-          )
-        : edges,
-    [edges, cutHighlight]
+    () => {
+      if (!cutHighlight && !hoverEdge) return edges;
+      return edges.map((e) => {
+        if (e.id === cutHighlight) {
+          return { ...e, style: { ...e.style, stroke: '#f59e0b', strokeWidth: 5 }, zIndex: 100 };
+        }
+        if (e.id === hoverEdge) {
+          return { ...e, style: { ...e.style, stroke: '#ef4444', strokeWidth: 4 }, zIndex: 90 };
+        }
+        return e;
+      });
+    },
+    [edges, cutHighlight, hoverEdge]
   );
 
   return (
-    <div className="nf-canvas-wrap">
+    <div className="nf-canvas-wrap" ref={wrapRef}>
       <ReactFlow
         nodes={nodes}
         edges={highlightEdges}
@@ -272,8 +359,12 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
         fitView
         fitViewOptions={{ padding: 0.25 }}
         proOptions={{ hideAttribution: true }}
+        // 缩放模式:默认不随滚轮缩放画布;按住 Ctrl 滚轮时(任意位置)才整体缩放(走 pinch 分支)
+        zoomOnScroll={false}
+        zoomOnPinch
+        zoomActivationKeyCode="Control"
       >
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#273349" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1.7} color="var(--flow-dot)" />
         <Controls showInteractive={false} />
         <MiniMap
           nodeColor={(n) => {
@@ -281,12 +372,23 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
             return cfg ? CATEGORY_INFO[cfg.category].color : '#888';
           }}
           nodeStrokeWidth={2}
-          maskColor="rgba(2,6,23,0.7)"
+          maskColor="var(--flow-mask)"
           pannable
           zoomable
           style={{ width: 180, height: 120 }}
         />
       </ReactFlow>
+      {/* Ctrl 切断标记:划过并切断连线时的短暂反馈(红色斜切标记,快速扩散淡出) */}
+      {cutFlash.map((f) => (
+        <span key={f.key} className="nf-cut-flash" style={{ left: f.x, top: f.y }} />
+      ))}
+      {/* Shift 拖拽插入点预览 */}
+      {insertPreview && (
+        <div className="nf-insert-preview" style={{ left: insertPreview.x, top: insertPreview.y }}>
+          <span className="nf-insert-dot" />
+          <span className="nf-insert-label">插入</span>
+        </div>
+      )}
     </div>
   );
 }

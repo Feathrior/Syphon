@@ -1,9 +1,10 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import * as echarts from 'echarts';
 import type { Column, DataMap, DataObject, NodeConfig } from '../types/data';
 import { presetColors } from '../types/data';
 import { useGraph } from '../store/useGraph';
 import { toNum } from '../utils/math';
+import { savePngFile } from '../utils/tauri';
 
 // ==================== 预制可视化 ====================
 
@@ -32,6 +33,54 @@ function isCategoryCol(col: Column | undefined): boolean {
     if (typeof v === 'string' && toNum(v) === null) strCount++;
   }
   return strCount > n / 2;
+}
+
+/** 有序数组分位数 */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = p * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+/** 表格中某列(按名称;找不到返回 undefined) */
+function colByName(table: Extract<DataMap[string], { kind: 'table' }>, name: string): Column | undefined {
+  if (!name) return undefined;
+  return table.columns.find((c) => c.name === name);
+}
+
+/** 边列表聚合:source→target 权重(无权重列时按出现次数) */
+function buildLinks(
+  table: Extract<DataMap[string], { kind: 'table' }>,
+  sourceCol: string,
+  targetCol: string,
+  valueCol: string
+): { links: { source: string; target: string; value: number }[]; names: string[] } {
+  const sc = colByName(table, sourceCol);
+  const tc = colByName(table, targetCol);
+  if (!sc || !tc) return { links: [], names: [] };
+  const vc = valueCol ? colByName(table, valueCol) : undefined;
+  const map = new Map<string, number>();
+  const nameSet = new Set<string>();
+  const n = Math.min(sc.values.length, tc.values.length);
+  for (let i = 0; i < n; i++) {
+    const s = String(sc.values[i] ?? '').trim();
+    const t = String(tc.values[i] ?? '').trim();
+    if (!s || !t || s === t) continue;
+    const v = vc ? toNum(vc.values[i]) ?? 1 : 1;
+    const key = s + '\u0000' + t;
+    map.set(key, (map.get(key) ?? 0) + Math.max(0, v));
+    nameSet.add(s);
+    nameSet.add(t);
+  }
+  return {
+    links: [...map].map(([k, value]) => {
+      const [s, t] = k.split('\u0000');
+      return { source: s, target: t, value };
+    }),
+    names: [...nameSet],
+  };
 }
 
 function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): echarts.EChartsOption {
@@ -190,12 +239,20 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
       if (cols.length > 0) {
         const rows = Math.min(120, cols[0].values.length);
         const data: [number, number, number][] = [];
+        let dMin = Infinity;
+        let dMax = -Infinity;
         for (let i = 0; i < rows; i++) {
           for (let j = 0; j < cols.length; j++) {
             const v = toNum(cols[j].values[i]);
-            if (v !== null) data.push([j, i, v]);
+            if (v !== null) {
+              data.push([j, i, v]);
+              if (v < dMin) dMin = v;
+              if (v > dMax) dMax = v;
+            }
           }
         }
+        if (!Number.isFinite(dMin)) dMin = 0;
+        if (!Number.isFinite(dMax)) dMax = 1;
         return {
           backgroundColor: 'transparent',
           title: baseTitle,
@@ -203,7 +260,7 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
           grid: { left: 60, right: 20, top: 30, bottom: 40 },
           xAxis: { type: 'category', data: cols.map((c) => c.name), splitArea: { show: true } },
           yAxis: { type: 'category', data: Array.from({ length: rows }, (_, i) => String(i)), splitArea: { show: true } },
-          visualMap: { min: undefined, max: undefined, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#0f172a', '#3b82f6', '#f59e0b', '#ef4444'] } },
+          visualMap: { min: dMin, max: dMax, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#0f172a', '#3b82f6', '#f59e0b', '#ef4444'] } },
           series: [{ type: 'heatmap', data }],
         };
       }
@@ -234,6 +291,155 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
     }
   }
 
+  // 小提琴图(核密度估计 + custom series 绘制轮廓)
+  if (chartType === 'violin') {
+    if (table) {
+      const cols = numericCols(table).slice(0, 8);
+      if (cols.length > 0) {
+        const series: any[] = cols.map((col) => {
+          const sorted = col.values
+            .map(toNum)
+            .filter((v): v is number => v !== null)
+            .sort((a, b) => a - b);
+          return {
+            type: 'custom' as const,
+            name: col.name,
+            data: [0],
+            z: 3,
+            renderItem: (params: unknown, api: unknown) => {
+              const p = params as { seriesIndex: number };
+              const a = api as {
+                coord: (v: [number, number]) => [number, number];
+                size: (v: [number, number]) => [number, number];
+              };
+              const j = p.seriesIndex;
+              if (sorted.length < 2) return null;
+              const min = sorted[0];
+              const max = sorted[sorted.length - 1];
+              const n = sorted.length;
+              // 带宽:Silverman 规则(基于 IQR 鲁棒估计)
+              const iqr = percentile(sorted, 0.75) - percentile(sorted, 0.25);
+              const sigma = Math.min(iqr / 1.349, (max - min) / 2) || (max - min);
+              const bw = Math.max(1e-6, 1.06 * sigma * Math.pow(n, -1 / 5));
+              const samples = 40;
+              const xs: number[] = [];
+              const dens: number[] = [];
+              let maxD = 0;
+              for (let i = 0; i <= samples; i++) {
+                const v = min + ((max - min) * i) / samples;
+                let s = 0;
+                for (const x of sorted) s += Math.exp(-((v - x) * (v - x)) / (2 * bw * bw));
+                const d = s / (n * bw * Math.sqrt(2 * Math.PI));
+                xs.push(v);
+                dens.push(d);
+                if (d > maxD) maxD = d;
+              }
+              const halfBand = Math.max(10, a.size([1, 0])[0] * 0.3);
+              const points: [number, number][] = [];
+              for (let i = 0; i <= samples; i++) {
+                const [cx, cy] = a.coord([j, xs[i]]);
+                points.push([cx - (dens[i] / maxD) * halfBand, cy]);
+              }
+              for (let i = samples; i >= 0; i--) {
+                const [cx, cy] = a.coord([j, xs[i]]);
+                points.push([cx + (dens[i] / maxD) * halfBand, cy]);
+              }
+              const med = percentile(sorted, 0.5);
+              const [mx, my] = a.coord([j, med]);
+              return {
+                type: 'group',
+                children: [
+                  {
+                    type: 'polygon',
+                    shape: { points },
+                    style: { fill: '#3b82f6', opacity: 0.6, stroke: '#1d4ed8', lineWidth: 1.2 },
+                  },
+                  {
+                    type: 'line',
+                    shape: { x1: mx - halfBand * 0.85, y1: my, x2: mx + halfBand * 0.85, y2: my },
+                    style: { stroke: '#ffffff', lineWidth: 1.5 },
+                  },
+                ],
+              } as any;
+            },
+          };
+        });
+        return {
+          backgroundColor: 'transparent',
+          title: baseTitle,
+          tooltip: { trigger: 'item' },
+          grid: { left: 45, right: 20, top: 30, bottom: 60 },
+          xAxis: { type: 'category', data: cols.map((c) => c.name), axisLabel: { rotate: 30 } },
+          yAxis: { type: 'value' },
+          series,
+        };
+      }
+    }
+  }
+
+  // 桑基图(source→target 权重)
+  if (chartType === 'sankey') {
+    if (table) {
+      const { links, names } = buildLinks(table, String(params.sourceCol ?? ''), String(params.targetCol ?? ''), String(params.valueCol ?? ''));
+      if (links.length > 0 && names.length > 0) {
+        return {
+          backgroundColor: 'transparent',
+          title: baseTitle,
+          tooltip: { trigger: 'item' },
+          series: [
+            {
+              type: 'sankey',
+              left: 20,
+              right: 70,
+              top: 30,
+              bottom: 30,
+              data: names.map((name) => ({ name })),
+              links,
+              label: { fontSize: 10, color: '#475569' },
+              lineStyle: { color: 'gradient', opacity: 0.45 },
+              itemStyle: { borderWidth: 0 },
+            },
+          ],
+        };
+      }
+    }
+  }
+
+  // 网络示意图(force 布局)
+  if (chartType === 'graph') {
+    if (table) {
+      const { links, names } = buildLinks(table, String(params.sourceCol ?? ''), String(params.targetCol ?? ''), String(params.valueCol ?? ''));
+      if (links.length > 0 && names.length > 0) {
+        const maxV = Math.max(...links.map((l) => l.value), 1);
+        return {
+          backgroundColor: 'transparent',
+          title: baseTitle,
+          tooltip: { trigger: 'item' },
+          series: [
+            {
+              type: 'graph',
+              layout: 'force',
+              roam: true,
+              draggable: true,
+              label: { show: true, fontSize: 10, color: '#475569' },
+              force: { repulsion: 120, edgeLength: [60, 120] },
+              data: names.map((name) => ({ name })),
+              links: links.map((l) => ({
+                source: l.source,
+                target: l.target,
+                value: l.value,
+                lineStyle: { width: Math.max(1, (l.value / maxV) * 5), opacity: 0.55 },
+              })),
+              lineStyle: { color: 'source', curveness: 0.06 },
+              itemStyle: { color: '#3b82f6', borderColor: '#fff', borderWidth: 1 },
+              emphasis: { focus: 'adjacency', lineStyle: { width: 4 } },
+            },
+          ],
+        };
+      }
+    }
+  }
+
   return {
     backgroundColor: 'transparent',
     title: { text: '无可用数据', textStyle: { fontSize: 12, color: '#94a3b8' } },
@@ -242,12 +448,26 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
   };
 }
 
+/** 导出时使用的紧凑 grid(贴坐标轴,白边最小) */
+function compactGrid(chartType: string): Record<string, number> {
+  if (chartType === 'heatmap') return { left: 10, right: 12, top: 26, bottom: 64 };
+  if (chartType === 'box' || chartType === 'violin') return { left: 10, right: 12, top: 28, bottom: 46 };
+  return { left: 10, right: 12, top: 28, bottom: 36 };
+}
+
 export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: string }) {
   const node = useGraph((s) => s.nodes.find((n) => n.id === nodeId));
   const result = useGraph((s) => s.results[nodeId]);
   const params = node?.data.params ?? {};
+  // 独立图表节点(viz_xxx)→ 图表类型;旧 viz_preset 走 params.chartType
+  const configId = node?.data.configId ?? '';
+  const chartType = configId.startsWith('viz_') && configId !== 'viz_principled'
+    ? configId.slice(4)
+    : String(params.chartType ?? 'scatter');
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const prevTypeRef = useRef<string | null>(null);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -255,11 +475,14 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     const option = buildPresetOption(params, result?.inputs ?? {});
     // 论文发表风格的亮色版本:白底、深色文字
     option.backgroundColor = '#ffffff';
-    chartRef.current.setOption(option, true);
+    // 仅图表类型切换时全量重建,同类型数据变化走增量更新(避免热力图等大图卡顿)
+    const notMerge = prevTypeRef.current !== chartType;
+    prevTypeRef.current = chartType;
+    chartRef.current.setOption(option, notMerge);
     const ro = new ResizeObserver(() => chartRef.current?.resize());
     ro.observe(ref.current);
     return () => ro.disconnect();
-  }, [params, result, nodeId]);
+  }, [params, result, nodeId, chartType]);
 
   useEffect(() => {
     return () => {
@@ -268,26 +491,48 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     };
   }, []);
 
-  // 导出与图表完全等大像素的 PNG(pixelRatio=1 即按当前显示尺寸原样输出)
-  const handleExport = () => {
-    const url = chartRef.current?.getDataURL({
-      type: 'png',
-      pixelRatio: 1,
-      backgroundColor: '#ffffff',
-    });
-    if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'chart.png';
-    a.click();
+  // 滚轮缩放预览:未按 Ctrl 时缩放预览内容;按住 Ctrl 时交给 React Flow 整体缩放画布
+  const onWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setZoom((z) => Math.min(4, Math.max(0.5, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))));
+  };
+
+  // 导出:离屏渲染大尺寸 + 紧凑 grid(贴坐标轴)后保存 PNG
+  const handleExport = async () => {
+    const off = document.createElement('div');
+    off.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:900px;background:#fff;';
+    document.body.appendChild(off);
+    try {
+      const chart = echarts.init(off, 'light');
+      const option = buildPresetOption(params, result?.inputs ?? {});
+      option.backgroundColor = '#ffffff';
+      if (option.grid && typeof option.grid === 'object') {
+        option.grid = { ...(option.grid as object), ...compactGrid(chartType) };
+      }
+      chart.setOption(option);
+      // 等待 force 布局 / 渲染稳定
+      await new Promise((r) => setTimeout(r, 120));
+      const url = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' });
+      chart.dispose();
+      await savePngFile(url, 'chart.png');
+    } finally {
+      off.remove();
+    }
   };
 
   return (
     <>
-      <div className="nf-chart" ref={ref} />
+      <div className="nf-chart-wrap" onWheel={onWheel}>
+        <div className="nf-chart-scale" style={{ transform: `scale(${zoom})` }}>
+          <div className="nf-chart" ref={ref} />
+        </div>
+      </div>
       <div className="nf-viewer-actions">
+        <span className="nf-zoom-hint">{Math.round(zoom * 100)}%</span>
         <button className="nf-btn nf-btn-sm nf-export-btn" onClick={handleExport}>
-          导出 PNG(等大像素)
+          导出 PNG
         </button>
       </div>
     </>
@@ -886,6 +1131,7 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
   const params = node?.data.params ?? {};
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -917,8 +1163,16 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
     return () => ro.disconnect();
   }, [params, result, nodeId]);
 
-  // 导出:按坐标系输入的像素大小离屏渲染,导出与坐标系尺寸完全等大的 PNG
-  const handleExport = () => {
+  // 滚轮缩放预览:未按 Ctrl 时缩放预览内容;按住 Ctrl 时交给 React Flow 整体缩放画布
+  const onWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setZoom((z) => Math.min(4, Math.max(0.5, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))));
+  };
+
+  // 导出:按坐标系输入像素大小离屏渲染,自动裁剪到内容边缘(只留少量白边)
+  const handleExport = async () => {
     const axes = resolveAxes(result?.inputs?.in4);
     const w = Math.max(100, Math.min(12000, Math.round(axes.xLen)));
     const h = Math.max(100, Math.min(12000, Math.round(axes.yLen)));
@@ -928,18 +1182,54 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     drawScene(ctx, w, h, params, result?.inputs ?? {}, result?.multiInputs ?? {});
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = 'principled.png';
-    a.click();
+    // 扫描内容 bbox(与背景色不同的像素),随后裁剪 + 少量留白
+    const C = presetColors(params);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const m = C.bg.match(/#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
+    const [br, bgG, bgB] = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [255, 255, 255];
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 800));
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const i = (y * w + x) * 4;
+        if (Math.abs(data[i] - br) + Math.abs(data[i + 1] - bgG) + Math.abs(data[i + 2] - bgB) > 24) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) {
+      minX = 0;
+      minY = 0;
+      maxX = w - 1;
+      maxY = h - 1;
+    }
+    const pad = 6;
+    const cw = maxX - minX + 1 + pad * 2;
+    const ch = maxY - minY + 1 + pad * 2;
+    const out = document.createElement('canvas');
+    out.width = cw;
+    out.height = ch;
+    const octx = out.getContext('2d');
+    if (!octx) return;
+    octx.fillStyle = C.bg;
+    octx.fillRect(0, 0, cw, ch);
+    octx.drawImage(canvas, minX, minY, maxX - minX + 1, maxY - minY + 1, pad, pad, maxX - minX + 1, maxY - minY + 1);
+    await savePngFile(out.toDataURL('image/png'), 'principled.png');
   };
 
   return (
     <div ref={wrapRef} className="nf-principled">
-      <canvas ref={canvasRef} />
+      {/* 仅画布缩放(等比 transform);操作栏/标题不随滚轮缩放 */}
+      <div className="nf-chart-scale" style={{ transform: `scale(${zoom})` }} onWheel={onWheel}>
+        <canvas ref={canvasRef} />
+      </div>
       <div className="nf-viewer-actions">
+        <span className="nf-zoom-hint">{Math.round(zoom * 100)}%</span>
         <button className="nf-btn nf-btn-sm nf-export-btn" onClick={handleExport}>
-          导出 PNG(等大像素)
+          导出 PNG
         </button>
       </div>
     </div>

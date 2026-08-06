@@ -689,13 +689,31 @@ const execTableToDistribution: ExecFn = ({ params, inputs }) => {
 
 const execSeriesToScatter: ExecFn = (ctx) => {
   const pts = makeSeries(ctx, 'in0');
-  return {
-    out0: {
-      kind: 'scatter',
-      name: str(ctx.params.name, '散点'),
-      points: pts.map((p) => [p[0], p[1]]),
-    },
+  // 暴露参数:接入数据列后逐点大小/颜色与数值成正比
+  const sizeVals = exposedValues(ctx.inputs.exp_pointSize);
+  const colorVals = exposedValues(ctx.inputs.exp_pointColor);
+  const normSize = sizeVals ? norm01(sizeVals) : null;
+  const normColor = colorVals ? norm01(colorVals) : null;
+  const baseSize = Math.max(1, num(ctx.params.pointSize, 4));
+  const baseColor = str(ctx.params.pointColor, '#1f77b4');
+  const shape = str(ctx.params.pointShape, 'circle') as 'circle' | 'square' | 'diamond' | 'triangle';
+  const sizes: number[] = [];
+  const colors: string[] = [];
+  pts.forEach((p, i) => {
+    if (normSize) sizes.push(baseSize * Math.max(0.3, normSize[i] ?? 0.5));
+    if (normColor) colors.push(valueColor(normColor[i] ?? 0));
+  });
+  const out: DataObject = {
+    kind: 'scatter',
+    name: str(ctx.params.name, '散点'),
+    points: pts.map((p) => [p[0], p[1]]),
+    pointSize: baseSize,
+    pointColor: baseColor,
+    pointShape: shape,
   };
+  if (sizes.length) out.sizes = sizes;
+  if (colors.length) out.colors = colors;
+  return { out0: out };
 };
 
 const execLinearFitDirect: ExecFn = (ctx) => {
