@@ -43,7 +43,8 @@ body {
   gap: 10px;
   height: 44px;
   padding: 0 12px;
-  background: var(--bg1);
+  /* 半透明背景,让窗口顶部的云母(Mica)效果透出 */
+  background: rgba(15, 23, 42, 0.72);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   user-select: none;

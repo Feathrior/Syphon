@@ -1,6 +1,6 @@
 import { useReactFlow } from '@xyflow/react';
 import { useGraph } from '../store/useGraph';
-import { pickJsonFile } from '../utils/tauri';
+import { pickJsonFile, saveTextFile } from '../utils/tauri';
 
 interface Props {
   boxSelect: boolean;
@@ -25,16 +25,11 @@ export default function Toolbar({ boxSelect, setBoxSelect }: Props) {
     if (window.confirm('确定清空画布上的所有节点吗?')) clearAll();
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (nodeCount === 0) return;
     const json = saveGraph();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'syphon-graph.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    const ok = await saveTextFile(json, 'syphon-graph.json');
+    if (!ok) window.alert('保存画布失败');
   };
 
   const handleLoad = async () => {

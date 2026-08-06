@@ -1,5 +1,5 @@
-import { open } from '@tauri-apps/plugin-dialog';
-import { readFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readFile, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -76,7 +76,7 @@ export async function pickJsonFile(): Promise<string | null> {
         const f = input.files?.[0];
         if (!f) return resolve(null);
         const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onload = () => resolve(String(reader.result ?? '').replace(/^\uFEFF/, ''));
         reader.onerror = () => resolve(null);
         reader.readAsText(f);
       };
@@ -89,9 +89,42 @@ export async function pickJsonFile(): Promise<string | null> {
       filters: [{ name: '画布文件 (JSON)', extensions: ['json'] }],
     });
     if (!file) return null;
-    return await readTextFile(file as string);
+    // 去除 UTF-8 BOM(Windows 记事本等编辑器可能写入),否则 JSON.parse 会失败
+    const text = await readTextFile(file as string);
+    return text.replace(/^\uFEFF/, '');
   } catch (err) {
     console.error('读取画布文件失败:', err);
     return null;
+  }
+}
+
+// 保存文本文件:桌面端弹出"另存为"对话框;浏览器端回退为 Blob 下载
+export async function saveTextFile(content: string, defaultName: string): Promise<boolean> {
+  if (!isTauri()) {
+    return new Promise((resolve) => {
+      const blob = new Blob([content], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // 延迟释放,避免部分浏览器/大文件下点击后立即失效
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      resolve(true);
+    });
+  }
+  try {
+    const path = await save({
+      defaultPath: defaultName,
+      filters: [{ name: '画布文件 (JSON)', extensions: ['json'] }],
+    });
+    if (!path) return false;
+    await writeTextFile(path, content);
+    return true;
+  } catch (err) {
+    console.error('保存文件失败:', err);
+    return false;
   }
 }
