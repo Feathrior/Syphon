@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import * as echarts from 'echarts';
 import type { Column, DataMap, DataObject, NodeConfig } from '../types/data';
-import { presetColors } from '../types/data';
+import { presetColors, parseGradient } from '../types/data';
 import { useGraph } from '../store/useGraph';
 import { toNum } from '../utils/math';
 import { savePngFile } from '../utils/tauri';
+import { isResizing, onResizeEnd } from '../utils/resizeGuard';
 
 // ==================== 预制可视化 ====================
 
@@ -83,8 +84,10 @@ function buildLinks(
   };
 }
 
-function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): echarts.EChartsOption {
-  const chartType = String(params.chartType ?? 'scatter');
+/** 构建独立图表节点(viz_xxx)的 ECharts 配置。
+ *  图表类型由调用方显式传入(取自节点 configId,如 viz_box→'box'),
+ *  不能从 params.chartType 推断 —— 预设节点参数里没有该字段,否则会全部回退成散点图。 */
+function buildPresetOption(chartType: string, params: Record<string, unknown>, inputs: DataMap): echarts.EChartsOption {
   const title = String(params.title ?? '');
   const table = inputs.in0?.kind === 'table' ? inputs.in0 : undefined;
   const scatter = inputs.in1;
@@ -253,6 +256,12 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
         }
         if (!Number.isFinite(dMin)) dMin = 0;
         if (!Number.isFinite(dMax)) dMax = 1;
+        // 颜色渐变:优先使用"色带输入"接入的色带,否则用节点参数里的渐变;calculable:false 取消可编辑色带(仅展示)
+        const cb = inputs.in1;
+        const gradientStops = cb && cb.kind === 'colorbar' && cb.stops.length > 0 ? cb.stops : parseGradient(params.gradient);
+        const heatColors = gradientStops.map((s) => s.color);
+        const heatMin = cb && cb.kind === 'colorbar' && Number.isFinite(cb.min) ? (cb.min as number) : dMin;
+        const heatMax = cb && cb.kind === 'colorbar' && Number.isFinite(cb.max) ? (cb.max as number) : dMax;
         return {
           backgroundColor: 'transparent',
           title: baseTitle,
@@ -260,7 +269,7 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
           grid: { left: 60, right: 20, top: 30, bottom: 40 },
           xAxis: { type: 'category', data: cols.map((c) => c.name), splitArea: { show: true } },
           yAxis: { type: 'category', data: Array.from({ length: rows }, (_, i) => String(i)), splitArea: { show: true } },
-          visualMap: { min: dMin, max: dMax, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#0f172a', '#3b82f6', '#f59e0b', '#ef4444'] } },
+          visualMap: { min: heatMin, max: heatMax, calculable: false, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: heatColors } },
           series: [{ type: 'heatmap', data }],
         };
       }
@@ -296,6 +305,23 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
     if (table) {
       const cols = numericCols(table).slice(0, 8);
       if (cols.length > 0) {
+        // custom series 的 data 为 [0](仅触发 renderItem),yAxis 范围不会自动包含实际数据值。
+        // 必须显式设置 min/max,否则 a.coord([j, value]) 映射出的 y 坐标会超出可视区域
+        let yMin = Infinity;
+        let yMax = -Infinity;
+        for (const col of cols) {
+          for (const v of col.values) {
+            const n = toNum(v);
+            if (n !== null) {
+              if (n < yMin) yMin = n;
+              if (n > yMax) yMax = n;
+            }
+          }
+        }
+        if (!Number.isFinite(yMin)) yMin = 0;
+        if (!Number.isFinite(yMax)) yMax = 1;
+        // 留 5% 边距,避免小提琴顶部/底部贴边
+        const yPad = (yMax - yMin) * 0.05 || 0.5;
         const series: any[] = cols.map((col) => {
           const sorted = col.values
             .map(toNum)
@@ -370,7 +396,7 @@ function buildPresetOption(params: Record<string, unknown>, inputs: DataMap): ec
           tooltip: { trigger: 'item' },
           grid: { left: 45, right: 20, top: 30, bottom: 60 },
           xAxis: { type: 'category', data: cols.map((c) => c.name), axisLabel: { rotate: 30 } },
-          yAxis: { type: 'value' },
+          yAxis: { type: 'value', min: yMin - yPad, max: yMax + yPad },
           series,
         };
       }
@@ -455,6 +481,48 @@ function compactGrid(chartType: string): Record<string, number> {
   return { left: 10, right: 12, top: 28, bottom: 36 };
 }
 
+/** 预览窗共享交互:滚轮以鼠标指针位置为锚点缩放,按住拖拽平移,初始化重置。
+ *  图表预览(独立图表节点)与原理化输出(坐标系 canvas)共用同一套交互,
+ *  保证两个预览窗的操作方式完全一致。 */
+function usePreviewView(wrapRef: React.RefObject<HTMLDivElement | null>) {
+  const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
+  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  // 滚轮缩放预览:未按 Ctrl 时以鼠标指针位置为锚点缩放;按住 Ctrl 时交给 React Flow 整体缩放画布
+  const onWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setView((v) => {
+      const nz = Math.min(4, Math.max(0.5, v.zoom * factor));
+      const f = nz / v.zoom;
+      return { zoom: nz, pan: { x: mx - (mx - v.pan.x) * f, y: my - (my - v.pan.y) * f } };
+    });
+  };
+  // 拖拽平移:放大预览后按住并拖动可改变预览图像位置
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: view.pan.x, panY: view.pan.y };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setView((v) => ({ ...v, pan: { x: d.panX + e.clientX - d.startX, y: d.panY + e.clientY - d.startY } }));
+  };
+  const onPointerUp = () => {
+    dragRef.current = null;
+  };
+  // 初始化:重置预览缩放与平移(大小和方向恢复默认)
+  const resetView = () => {
+    setView({ zoom: 1, pan: { x: 0, y: 0 } });
+  };
+  return { view, onWheel, onPointerDown, onPointerMove, onPointerUp, resetView };
+}
+
 export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: string }) {
   const node = useGraph((s) => s.nodes.find((n) => n.id === nodeId));
   const result = useGraph((s) => s.results[nodeId]);
@@ -464,15 +532,20 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
   const chartType = configId.startsWith('viz_') && configId !== 'viz_principled'
     ? configId.slice(4)
     : String(params.chartType ?? 'scatter');
-  const ref = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
+  const divRef = useRef<HTMLDivElement>(null);
   const prevTypeRef = useRef<string | null>(null);
-  const [zoom, setZoom] = useState(1);
+  // 与原理化输出共用同一套预览交互(指针锚定缩放 / 拖拽平移 / 初始化)
+  const { view, onWheel, onPointerDown, onPointerMove, onPointerUp, resetView } = usePreviewView(wrapRef);
+  // 导出像素尺寸:支持与原理化输出相同的 canvasPxW/H 参数,默认 1200×900
+  const exportW = Math.round(toNum(params.canvasPxW as number | string | undefined) ?? 1200);
+  const exportH = Math.round(toNum(params.canvasPxH as number | string | undefined) ?? 900);
 
   useEffect(() => {
-    if (!ref.current) return;
-    if (!chartRef.current) chartRef.current = echarts.init(ref.current, 'light');
-    const option = buildPresetOption(params, result?.inputs ?? {});
+    if (!divRef.current) return;
+    if (!chartRef.current) chartRef.current = echarts.init(divRef.current, 'light');
+    const option = buildPresetOption(chartType, params, result?.inputs ?? {});
     // 论文发表风格的亮色版本:白底、深色文字
     option.backgroundColor = '#ffffff';
     // 仅图表类型切换时全量重建,同类型数据变化走增量更新(避免热力图等大图卡顿)
@@ -480,10 +553,12 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     prevTypeRef.current = chartType;
     chartRef.current.setOption(option, notMerge);
     // ECharts resize 节流 + 防抖:连续 resize 时限制重绘频率(约 25fps),
-    // 停止后延迟一次兜底精确重绘,避免窗口缩放时每帧全量重绘导致卡顿
+    // 停止后延迟一次兜底精确重绘,避免窗口缩放时每帧全量重绘导致卡顿。
+    // 窗口整体缩放期间(isResizing)完全跳过 —— 由 resizeGuard 统一在缩放结束后批量重绘
     let lastResize = 0;
     let timer = 0;
     const onResize = () => {
+      if (isResizing()) return; // 窗口缩放期间跳过,结束后由 onResizeEnd 兜底
       if (performance.now() - lastResize >= 40) {
         lastResize = performance.now();
         chartRef.current?.resize();
@@ -492,10 +567,13 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
       timer = window.setTimeout(() => chartRef.current?.resize(), 120);
     };
     const ro = new ResizeObserver(onResize);
-    ro.observe(ref.current);
+    ro.observe(divRef.current);
+    // 窗口缩放结束后的兜底精确重绘(与各 viewer 统一批量执行,避免逐个 resize 造成帧堆积)
+    const unbindResizeEnd = onResizeEnd(() => chartRef.current?.resize());
     return () => {
       ro.disconnect();
       clearTimeout(timer);
+      unbindResizeEnd();
     };
   }, [params, result, nodeId, chartType]);
 
@@ -506,22 +584,16 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     };
   }, []);
 
-  // 滚轮缩放预览:未按 Ctrl 时缩放预览内容;按住 Ctrl 时交给 React Flow 整体缩放画布
-  const onWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setZoom((z) => Math.min(4, Math.max(0.5, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))));
-  };
-
-  // 导出:离屏渲染大尺寸 + 紧凑 grid(贴坐标轴)后保存 PNG
+  // 导出:按导出像素尺寸离屏渲染(白底 + 紧凑 grid 贴坐标轴)后保存 PNG
   const handleExport = async () => {
+    const w = Math.max(100, Math.min(12000, exportW));
+    const h = Math.max(100, Math.min(12000, exportH));
     const off = document.createElement('div');
-    off.style.cssText = 'position:fixed;left:-10000px;top:0;width:1200px;height:900px;background:#fff;';
+    off.style.cssText = `position:fixed;left:-10000px;top:0;width:${w}px;height:${h}px;background:#fff;`;
     document.body.appendChild(off);
     try {
       const chart = echarts.init(off, 'light');
-      const option = buildPresetOption(params, result?.inputs ?? {});
+      const option = buildPresetOption(chartType, params, result?.inputs ?? {});
       option.backgroundColor = '#ffffff';
       if (option.grid && typeof option.grid === 'object') {
         option.grid = { ...(option.grid as object), ...compactGrid(chartType) };
@@ -538,19 +610,32 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
   };
 
   return (
-    <>
-      <div className="nf-chart-wrap" onWheel={onWheel}>
-        <div className="nf-chart-scale" style={{ transform: `scale(${zoom})` }}>
-          <div className="nf-chart" ref={ref} />
-        </div>
+    // 预览窗与原理化输出使用同一容器(.nf-principled)与操作栏:滚轮缩放、拖拽平移、初始化、导出
+    <div ref={wrapRef} className="nf-principled" onWheel={onWheel}>
+      <div
+        className="nf-chart-scale"
+        style={{ transform: `translate(${view.pan.x}px, ${view.pan.y}px) scale(${view.zoom})` }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <div className="nf-chart" ref={divRef} />
       </div>
       <div className="nf-viewer-actions">
-        <span className="nf-zoom-hint">{Math.round(zoom * 100)}%</span>
+        <span className="nf-zoom-hint">
+          {Math.round(view.zoom * 100)}%
+          <span className="nf-export-size">· 导出 {exportW}×{exportH}px</span>
+        </span>
+        <button className="nf-btn nf-btn-sm nf-reset-btn" onClick={resetView} title="重置预览缩放与位置">
+          初始化
+        </button>
         <button className="nf-btn nf-btn-sm nf-export-btn" onClick={handleExport}>
           导出 PNG
         </button>
       </div>
-    </>
+    </div>
   );
 });
 
@@ -722,14 +807,15 @@ function drawScene(
   const hy = axes.yLen / 2;
   const hz = axes.zLen / 2;
 
-  // 收集图元(点/线/面支持多路连接)
+  // 收集图元(点/线/面/文本支持多路连接)
   const collect = (key: string): DataObject[] =>
     multi[key] && multi[key].length > 0 ? multi[key] : inputs[key] ? [inputs[key]] : [];
   const scatterList = collect('in0').filter((o): o is Extract<DataObject, { kind: 'scatter' }> => o.kind === 'scatter');
   const seriesList = collect('in1').filter((o): o is Extract<DataObject, { kind: 'series' }> => o.kind === 'series');
   const meshList = collect('in2').filter((o): o is Extract<DataObject, { kind: 'mesh' }> => o.kind === 'mesh');
+  const textList = collect('in5').filter((o): o is Extract<DataObject, { kind: 'text' }> => o.kind === 'text');
   const dist = inputs.in3?.kind === 'distribution' ? inputs.in3 : undefined;
-  const hasData = scatterList.length > 0 || seriesList.length > 0 || meshList.length > 0 || !!dist;
+  const hasData = scatterList.length > 0 || seriesList.length > 0 || meshList.length > 0 || !!dist || textList.length > 0;
 
   // 数据坐标 → 轴盒局部坐标:每轴按范围独立缩放,精确覆盖 [min,max] 区间(如 x:10→100,y:10→50)
   const sx = axes.xLen / Math.max(axes.xMax - axes.xMin, 1e-9);
@@ -970,6 +1056,31 @@ function drawScene(
       ctx.fillStyle = col;
       drawShape(ctx, shp, sx, sy, sz);
     });
+  }
+
+  // 文本(可多路;锚定在轴盒内指定位置,字号按厘米换算像素,与坐标轴盒同比例)
+  if (textList.length > 0) {
+    // 1 厘米 ≈ 轴盒 X 方向全宽(xLen 厘米)映射到屏幕的像素数
+    const pxPerCm = ((Math.max(pMaxX - pMinX, 1) * d.scale) / Math.max(axes.xLen, 0.01)) * 0.62;
+    for (const txt of textList) {
+      const ax = txt.halign === 'left' ? -hx : txt.halign === 'right' ? hx : 0;
+      const ay = txt.valign === 'top' ? hy : txt.valign === 'bottom' ? -hy : 0;
+      const [px, py] = project(d, [ax, ay, 0]);
+      const fontPx = Math.max(6, txt.fontSize * pxPerCm);
+      ctx.font = `${fontPx}px ${txt.fontFamily}`;
+      ctx.textAlign = txt.halign === 'left' ? 'left' : txt.halign === 'right' ? 'right' : 'center';
+      ctx.textBaseline = txt.valign === 'top' ? 'top' : txt.valign === 'bottom' ? 'bottom' : 'middle';
+      if (txt.bgColor) {
+        const tw = ctx.measureText(txt.text).width;
+        const th = fontPx * 1.45;
+        const bx = ctx.textAlign === 'left' ? px : ctx.textAlign === 'right' ? px - tw : px - tw / 2;
+        const by = ctx.textBaseline === 'top' ? py : ctx.textBaseline === 'bottom' ? py - th : py - th / 2;
+        ctx.fillStyle = txt.bgColor;
+        ctx.fillRect(bx - 4, by - 2, tw + 8, th + 4);
+      }
+      ctx.fillStyle = txt.textColor;
+      ctx.fillText(txt.text, px, py);
+    }
   }
 
   // 坐标轴、刻度(自动)与数字标注(最后绘制,位于图元之上)
@@ -1256,9 +1367,8 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
   const params = node?.data.params ?? {};
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // 预览缩放与平移:滚轮以鼠标指针位置为锚点缩放,拖拽可改变预览图像位置
-  const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
-  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  // 与图表预览共用同一套预览交互(指针锚定缩放 / 拖拽平移 / 初始化)
+  const { view, onWheel, onPointerDown, onPointerMove, onPointerUp, resetView } = usePreviewView(wrapRef);
   // 画布像素大小(本节点参数):同时决定预览/导出白色矩形背景的宽高比与导出 PNG 的像素数量
   const exportW = Math.round(toNum(params.canvasPxW as number | string | undefined) ?? 1920);
   const exportH = Math.round(toNum(params.canvasPxH as number | string | undefined) ?? 1200);
@@ -1301,6 +1411,7 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
     // 窗口 resize 重绘调度:rAF 合并同帧多次触发 + 节流(连续 resize 时最小重绘间隔 40ms,
     // 约 25fps,显著降低 Tauri 打包后 WebView 每帧全量重绘的负担)+ 防抖(resize 停止 120ms
     // 后强制精确重绘一次,保证最终尺寸像素级准确)。三者配合使拖动窗口缩放流畅无延迟。
+    // 窗口整体缩放期间(isResizing)完全跳过 —— 由 resizeGuard 统一在缩放结束后批量重绘。
     const state = { raf: 0, timer: 0, last: 0 };
     const MIN_GAP = 40; // 连续 resize 时最小重绘间隔(ms)
     const SETTLE_DELAY = 120; // resize 停止后防抖时长(ms)
@@ -1309,6 +1420,7 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
       draw();
     };
     const scheduleDraw = () => {
+      if (isResizing()) return; // 窗口缩放期间跳过,结束后由 onResizeEnd 兜底
       // 节流:距上次重绘不足最小间隔时不立即重绘,交给下一帧再检查
       cancelAnimationFrame(state.raf);
       state.raf = requestAnimationFrame(() => {
@@ -1328,48 +1440,15 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
     draw();
     const ro = new ResizeObserver(scheduleDraw);
     ro.observe(wrap);
+    // 窗口缩放结束后的兜底精确重绘(与各 viewer 统一批量执行,避免逐个重绘造成帧堆积)
+    const unbindResizeEnd = onResizeEnd(performDraw);
     return () => {
       ro.disconnect();
       cancelAnimationFrame(state.raf);
       clearTimeout(state.timer);
+      unbindResizeEnd();
     };
   }, [params, result, nodeId]);
-
-  // 滚轮缩放预览:未按 Ctrl 时以鼠标指针位置为锚点缩放;按住 Ctrl 时交给 React Flow 整体缩放画布
-  const onWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    setView((v) => {
-      const nz = Math.min(4, Math.max(0.5, v.zoom * factor));
-      const f = nz / v.zoom;
-      return { zoom: nz, pan: { x: mx - (mx - v.pan.x) * f, y: my - (my - v.pan.y) * f } };
-    });
-  };
-
-  // 拖拽平移:放大预览后按住并拖动可改变预览图像位置
-  const onPointerDown = (e: React.PointerEvent) => {
-    e.stopPropagation();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: view.pan.x, panY: view.pan.y };
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = dragRef.current;
-    if (!d) return;
-    setView((v) => ({ ...v, pan: { x: d.panX + e.clientX - d.startX, y: d.panY + e.clientY - d.startY } }));
-  };
-  const onPointerUp = () => {
-    dragRef.current = null;
-  };
-
-  // 初始化:重置预览缩放与平移(大小和方向恢复默认)
-  const resetView = () => {
-    setView({ zoom: 1, pan: { x: 0, y: 0 } });
-  };
 
   // 导出:按"画布像素大小"参数离屏渲染,白色矩形背景即画布宽高,输出完整画布(不裁剪内容)
   const handleExport = async () => {

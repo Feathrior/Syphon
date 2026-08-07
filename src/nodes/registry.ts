@@ -1,4 +1,5 @@
 import type { NodeConfig, ParamSpec, Socket, SocketType } from '../types/data';
+import { DEFAULT_GRADIENT } from '../types/data';
 import { EXEC } from './exec';
 
 const s = (id: string, name: string, type: SocketType): Socket => ({ id, name, type });
@@ -93,6 +94,65 @@ export const nodeConfigs: NodeConfig[] = [
       { key: 'arrowY', label: 'Y 轴箭头', type: 'boolean', default: true, help: '在 Y 轴末端绘制箭头' },
     ],
     exec: EXEC.axis_input,
+  },
+  {
+    id: 'text_input',
+    label: '文本输入',
+    category: 'input',
+    description: '定义一个文本图元:内容、文本大小(厘米)、在坐标轴盒内的位置、背景色/文字颜色与字体。接入"原理化输出"后按厘米比例绘制。',
+    inputs: [],
+    outputs: [s('out0', '文本', 'text')],
+    params: [
+      { key: 'text', label: '文本内容', type: 'textarea', default: '示例文本', placeholder: '输入要显示的文本' },
+      { key: 'fontSize', label: '文本大小(厘米)', type: 'number', default: 3, step: 0.5, min: 0.2 },
+      { key: 'halign', label: '水平位置', type: 'select', default: 'center', options: [
+        { value: 'left', label: '靠左' },
+        { value: 'center', label: '居中' },
+        { value: 'right', label: '靠右' },
+      ] },
+      { key: 'valign', label: '垂直位置', type: 'select', default: 'middle', options: [
+        { value: 'top', label: '顶部' },
+        { value: 'middle', label: '居中' },
+        { value: 'bottom', label: '底部' },
+      ] },
+      { key: 'bgColor', label: '背景色', type: 'color', default: '' },
+      { key: 'textColor', label: '文字颜色', type: 'color', default: '#333333' },
+      { key: 'fontFamily', label: '字体', type: 'select', default: 'sans-serif', options: [
+        { value: 'sans-serif', label: '默认 (sans-serif)' },
+        { value: 'Microsoft YaHei', label: '微软雅黑' },
+        { value: 'SimSun', label: '宋体' },
+        { value: 'SimHei', label: '黑体' },
+        { value: 'KaiTi', label: '楷体' },
+        { value: 'monospace', label: '等宽 (monospace)' },
+        { value: 'Courier New', label: 'Courier New' },
+      ] },
+    ],
+    exec: EXEC.text_input,
+  },
+  {
+    id: 'colorbar_input',
+    label: '色带输入',
+    category: 'input',
+    description: '定义一个可调节的渐变色带:增删渐变停止点、调整颜色与位置。输出"色带",接入热力图等图表后控制其颜色映射。',
+    inputs: [],
+    outputs: [s('out0', '色带', 'colorbar')],
+    params: [
+      {
+        key: 'gradient',
+        label: '渐变色带',
+        type: 'gradient',
+        default: DEFAULT_GRADIENT.map((s) => ({ ...s })),
+        help: '点击可选中停止点,拖动调整位置;下方可改颜色,支持增删停止点',
+      },
+      { key: 'min', label: '最小值', type: 'number', default: 0, step: 0.1 },
+      { key: 'max', label: '最大值', type: 'number', default: 1, step: 0.1 },
+      { key: 'label', label: '色带标签', type: 'text', default: '', placeholder: '如:表达量' },
+      { key: 'orientation', label: '方向', type: 'select', default: 'horizontal', options: [
+        { value: 'horizontal', label: '水平' },
+        { value: 'vertical', label: '垂直' },
+      ] },
+    ],
+    exec: EXEC.colorbar_input,
   },
   {
     id: 'line_input',
@@ -510,11 +570,18 @@ export const nodeConfigs: NodeConfig[] = [
     id: 'viz_heatmap',
     label: '热力图',
     category: 'visualize',
-    description: '数值矩阵热力图:取表格前 10 个数值列,行数自动降采样以保证流畅。',
-    inputs: [s('in0', '表格', 'table')],
+    description: '数值矩阵热力图:取表格前 10 个数值列,行数自动降采样以保证流畅。可接入"色带输入"自定义颜色渐变,或在属性面板直接编辑渐变。',
+    inputs: [s('in0', '表格', 'table'), s('in1', '色带(颜色渐变)', 'colorbar')],
     outputs: [],
     params: [
       { key: 'title', label: '图表标题', type: 'text', default: '' },
+      {
+        key: 'gradient',
+        label: '颜色渐变',
+        type: 'gradient',
+        default: DEFAULT_GRADIENT.map((s) => ({ ...s })),
+        help: '热力图颜色映射渐变;接入色带输入时优先使用输入色带',
+      },
     ],
     isViewer: true,
   },
@@ -576,13 +643,14 @@ export const nodeConfigs: NodeConfig[] = [
     id: 'viz_principled',
     label: '原理化输出',
     category: 'visualize',
-    description: '原理化模式:接收点/线/面(均可多路连接)、分布与坐标系,所有图元缩放至互相垂直的坐标轴盒内部,预览窗与坐标系尺寸等比例。',
+    description: '原理化模式:接收点/线/面(均可多路连接)、分布、文本与坐标系,所有图元缩放至互相垂直的坐标轴盒内部,预览窗与坐标系尺寸等比例。',
     inputs: [
       { id: 'in0', name: '点(散点·可多连)', type: 'scatter', multi: true },
       { id: 'in1', name: '线(曲线·可多连)', type: 'series', multi: true },
       { id: 'in2', name: '面(网格·可多连)', type: 'mesh', multi: true },
       s('in3', '分布', 'distribution'),
       s('in4', '坐标系', 'axes'),
+      { id: 'in5', name: '文本(可多连)', type: 'text', multi: true },
     ],
     outputs: [],
     params: [

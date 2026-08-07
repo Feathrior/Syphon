@@ -1,5 +1,6 @@
 import type { Column, DataObject, ExecContext, ExecFn } from '../types/data';
 import { parseDelimitedText } from '../utils/csv';
+import { parseGradient } from '../types/data';
 import {
   compileFormula,
   cumulativeIntegral,
@@ -179,6 +180,37 @@ const execAxis: ExecFn = ({ params }) => {
       fontFamily,
       axisPreset: str(params.axisPreset, 'default'),
       arrows: { x: arrowX, y: arrowY },
+    },
+  };
+};
+
+// ---------- 文本输入(厘米制:文本在坐标系/轴盒语境下按比例缩放) ----------
+const execTextInput: ExecFn = ({ params }) => {
+  const text = str(params.text, '文本');
+  return {
+    out0: {
+      kind: 'text',
+      text,
+      fontSize: Math.max(0.2, num(params.fontSize, 3)),
+      halign: (str(params.halign, 'center') as 'left' | 'center' | 'right') || 'center',
+      valign: (str(params.valign, 'middle') as 'top' | 'middle' | 'bottom') || 'middle',
+      bgColor: params.bgColor ? String(params.bgColor) : undefined,
+      textColor: String(params.textColor ?? '#333333'),
+      fontFamily: str(params.fontFamily, 'sans-serif'),
+    },
+  };
+};
+
+// ---------- 色带输入(可调节渐变) ----------
+const execColorbarInput: ExecFn = ({ params }) => {
+  return {
+    out0: {
+      kind: 'colorbar',
+      stops: parseGradient(params.gradient),
+      min: num(params.min, 0),
+      max: num(params.max, 1),
+      label: str(params.label, ''),
+      horizontal: str(params.orientation, 'horizontal') === 'vertical' ? false : true,
     },
   };
 };
@@ -812,6 +844,8 @@ const execLinearFitDirect: ExecFn = (ctx) => {
 export const EXEC: Record<string, ExecFn> = {
   table_input: execTableInput,
   axis_input: execAxis,
+  text_input: execTextInput,
+  colorbar_input: execColorbarInput,
   line_input: execLineInput,
   face_input: execFaceInput,
   grid_input: execGridInput,

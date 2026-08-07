@@ -100,6 +100,22 @@ body {
 }
 
 /* ============ 应用骨架 ============ */
+/* 窗口缩放期间(resizeGuard 设置):暂停 viewer 交互与过渡,降低 DWM 合成负担。
+   暗色主题下 --bg-canvas 为 transparent(透出 Mica),缩放期间改为不透明色,
+   减少 DWM alpha 合成开销,使窗口缩放跟手 */
+.nf-window-resizing .nf-viewer,
+.nf-window-resizing .nf-principled,
+.nf-window-resizing .react-flow__viewport {
+  pointer-events: none !important;
+}
+.nf-window-resizing * {
+  transition: none !important;
+  animation: none !important;
+}
+.nf-window-resizing {
+  --bg-canvas: var(--bg-surface) !important;
+}
+
 .nf-app {
   position: relative;
   display: flex;
@@ -740,6 +756,66 @@ body {
   align-self: flex-start;
 }
 
+/* ============ 渐变色带编辑器(gradient 参数类型) ============ */
+.nf-gradient-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nf-gradient-bar {
+  height: 22px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--stroke);
+  cursor: crosshair;
+}
+
+.nf-gradient-stops {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.nf-gradient-stop-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-raise);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-m);
+  padding: 4px 6px;
+}
+
+.nf-gradient-swatch {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--stroke-strong);
+}
+
+.nf-gradient-stop-row label {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.nf-gradient-stop-row input[type='number'] {
+  width: 56px;
+  padding: 2px 5px;
+  font-size: 11px;
+}
+
+.nf-gradient-stop-row input[type='color'] {
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--stroke-strong);
+  border-radius: var(--radius-s);
+  background: none;
+  cursor: pointer;
+}
+
 /* ============ range / color ============ */
 .nf-range-row {
   display: flex;
@@ -1107,9 +1183,11 @@ body {
   background: var(--bg-surface);
 }
 
+/* ECharts 图表预览:在原理化预览容器(.nf-principled)内占满可视区域,
+   随预览窗一起缩放/平移,行为与原理化输出 canvas 完全一致 */
 .nf-chart {
   width: 100%;
-  height: 230px;
+  height: 100%;
 }
 
 /* 查看器预览:滚轮缩放(等比 transform,放大时溢出裁剪,模拟图片查看器) */
@@ -1301,6 +1379,16 @@ body {
   letter-spacing: 0.8px;
   padding: 2px 4px 6px;
 }
+
+/* 从输出端拖出连线时菜单的提示条:告知选中节点后会自动连接 */
+.nf-menu-conn-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 6px;
+}
+
 
 .nf-menu-search {
   margin-bottom: 6px;

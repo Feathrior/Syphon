@@ -7,7 +7,6 @@ import {
   ReactFlow,
   SelectionMode,
   useReactFlow,
-  useStore,
 } from '@xyflow/react';
 import type { Connection, Edge, IsValidConnection, NodeMouseHandler, OnNodeDrag } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -21,10 +20,12 @@ export interface MenuRequest {
   y: number;
   flowPos: { x: number; y: number };
   nodeId?: string;
+  /** 从输出端拖出连线未连接时记录:选择新节点后自动创建"源节点 → 新节点"连线 */
+  pendingConn?: { source: string; sourceHandle: string | null; socketType: SocketType };
 }
 
 interface Props {
-  onOpenMenu: (x: number, y: number, nodeId?: string) => void;
+  onOpenMenu: (x: number, y: number, nodeId?: string, pendingConn?: MenuRequest['pendingConn']) => void;
   boxSelect: boolean;
 }
 
@@ -73,10 +74,12 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const [cutFlash, setCutFlash] = useState<{ x: number; y: number; key: number }[]>([]);
   // Alt+悬停曲线拆分:命中的曲线与拆分点(屏幕坐标),点击后写入曲线内部分割点 data.mid
   const [altSplit, setAltSplit] = useState<{ edgeId: string; fx: number; fy: number; sx: number; sy: number } | null>(null);
-  // 画布 transform:用于 zoom 换算与流坐标→屏幕坐标
-  const [viewTx, viewTy, viewZoom] = useStore((s) => s.transform);
+  // NOTE: 不再订阅 useStore((s) => s.transform) —— 那会让整个 NodeCanvas 在每次平移/缩放帧都重渲染。
+  // 改为在事件处理内用 getViewport() 按需读取当前视口,平移/缩放时零额外 React 渲染开销。
   // 本次连线拖拽是否成功连接(用于松开未连接时自动弹出节点菜单)
   const justConnectedRef = useRef(false);
+  // 从输出端拖出的连接信息(拖出时记录,松手未连接时传给节点菜单实现自动连接)
+  const pendingSourceRef = useRef<MenuRequest['pendingConn'] | null>(null);
 
   useEffect(() => {
     const dn = (e: KeyboardEvent) => {
@@ -198,21 +201,22 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       }
       const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const hit = closestOnEdgePath(edgeId, flow.x, flow.y);
-      if (!hit || hit.dist >= HIT) {
+      if (!hit || hit.dist >= 46 / getViewport().zoom) {
         setAltSplit(null);
         return;
       }
+      const vp = getViewport();
       setAltSplit({
         edgeId,
         fx: hit.x,
         fy: hit.y,
-        sx: hit.x * viewZoom + viewTx,
-        sy: hit.y * viewZoom + viewTy,
+        sx: hit.x * vp.zoom + vp.x,
+        sy: hit.y * vp.zoom + vp.y,
       });
     };
     window.addEventListener('mousemove', mv);
     return () => window.removeEventListener('mousemove', mv);
-  }, [screenToFlowPosition, viewZoom, viewTx, viewTy]);
+  }, [screenToFlowPosition, getViewport]);
 
   const isValidConnection: IsValidConnection = useMemo(() => {
     return (conn: Edge | Connection) => {
@@ -257,7 +261,8 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     selectSplitEdge(null);
   };
 
-  const HIT = 46 / viewZoom; // 命中距离按缩放换算,保证各缩放级别下都容易命中
+  /** 命中距离按缩放换算,保证各缩放级别下都容易命中。按需读取视口,不触发重渲染 */
+  const hitDist = () => 46 / getViewport().zoom;
 
   // Alt+点击曲线:在命中点写入曲线的内部分割点 data.mid。
   // 分割点从属于曲线本身(不是节点):让一条贝塞尔曲线外观上分成两段(功能仍是一条连线),
@@ -283,7 +288,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     if (e.altKey) {
       const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const hit = closestOnEdgePath(edge.id, flow.x, flow.y);
-      if (!hit || hit.dist >= HIT) return;
+      if (!hit || hit.dist >= hitDist()) return;
       splitEdgeAt(edge, hit.x, hit.y);
     }
   };
@@ -324,14 +329,24 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     return best;
   };
 
-  // 从输入端(target)拖拽连线,松开时未连上任何输出 → 自动弹出节点菜单,便于直接选择要连接的后方节点
+  // 从输出端拖出连线,松开时未连上任何输入 → 自动弹出节点菜单;
+  // 选择新节点后自动创建"源节点 → 新节点"连线。从输入端拖出未连接 → 弹菜单新建节点(原行为)
   const onConnectEnd = (e: MouseEvent | TouchEvent, cs: { fromHandle?: { type?: string } | null }) => {
     const connected = justConnectedRef.current;
     justConnectedRef.current = false;
-    if (connected) return;
-    if (cs.fromHandle?.type !== 'target') return;
+    if (connected) {
+      pendingSourceRef.current = null;
+      return;
+    }
     const x = 'clientX' in e ? e.clientX : window.innerWidth / 2;
     const y = 'clientY' in e ? e.clientY : window.innerHeight / 2;
+    // 从输出端拖出未连接:把拖出的源节点/端口类型传给菜单,选中节点后自动连线
+    if (cs.fromHandle?.type === 'source' && pendingSourceRef.current) {
+      onOpenMenu(x, y, undefined, pendingSourceRef.current);
+      pendingSourceRef.current = null;
+      return;
+    }
+    if (cs.fromHandle?.type !== 'target') return;
     onOpenMenu(x, y);
   };
 
@@ -346,6 +361,8 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       return;
     }
     const center = nodeCenter(node);
+    const HIT = hitDist();
+    const vp = getViewport();
     let best: { id: string; d: number; px: number; py: number } | null = null;
     for (const edge of edges) {
       const hit = closestOnEdgePath(edge.id, center.x, center.y);
@@ -355,7 +372,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       }
     }
     setCutHighlight(best?.id ?? null);
-    setInsertPreview(best ? { x: best.px * viewZoom + viewTx, y: best.py * viewZoom + viewTy } : null);
+    setInsertPreview(best ? { x: best.px * vp.zoom + vp.x, y: best.py * vp.zoom + vp.y } : null);
   };
 
   const onNodeDragStop: OnNodeDrag<GraphNode> = (e, node) => {
@@ -365,6 +382,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     const center = nodeCenter(node);
     const nc = getConfig(node.data.configId);
     if (!nc) return;
+    const HIT = hitDist();
     let best: { edge: Edge; d: number } | null = null;
     for (const edge of edges) {
       const hit = closestOnEdgePath(edge.id, center.x, center.y);
@@ -434,7 +452,19 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
           onConnect(conn);
         }}
         onConnectEnd={onConnectEnd}
-        onConnectStart={() => invalidRef.current.clear()}
+        onConnectStart={(_, params) => {
+          invalidRef.current.clear();
+          // 记录从哪个输出端拖出连线:松手未连接时据此自动连接新节点
+          if (params.handleType === 'source' && params.nodeId) {
+            const cfg = getConfig(nodes.find((n) => n.id === params.nodeId)?.data.configId ?? '');
+            const sock = cfg?.outputs.find((o) => o.id === params.handleId);
+            pendingSourceRef.current = sock
+              ? { source: params.nodeId, sourceHandle: params.handleId, socketType: sock.type }
+              : null;
+          } else {
+            pendingSourceRef.current = null;
+          }
+        }}
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
         onEdgeClick={onEdgeClick}

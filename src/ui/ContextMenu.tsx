@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import type { Category } from '../types/data';
-import { CATEGORY_INFO } from '../types/data';
-import { nodeConfigs } from '../nodes/registry';
+import type { Category, SocketType } from '../types/data';
+import { CATEGORY_INFO, isCompatible } from '../types/data';
+import { getConfig, nodeConfigs } from '../nodes/registry';
 import { useGraph } from '../store/useGraph';
 
 interface Props {
@@ -9,13 +9,16 @@ interface Props {
   y: number;
   flowPos: { x: number; y: number };
   nodeId?: string;
+  /** 从输出端拖出连线未连接:选择新节点后自动创建"源节点 → 新节点"连线 */
+  pendingConn?: { source: string; sourceHandle: string | null; socketType: SocketType };
   onClose: () => void;
 }
 
 const CATS: Category[] = ['input', 'clean', 'compute', 'transform', 'visualize'];
 
-export default function ContextMenu({ x, y, flowPos, nodeId, onClose }: Props) {
+export default function ContextMenu({ x, y, flowPos, nodeId, pendingConn, onClose }: Props) {
   const addNode = useGraph((s) => s.addNode);
+  const onConnect = useGraph((s) => s.onConnect);
   const removeNodes = useGraph((s) => s.removeNodes);
   const duplicateNodes = useGraph((s) => s.duplicateNodes);
   const [hovered, setHovered] = useState<Category>('input');
@@ -30,7 +33,20 @@ export default function ContextMenu({ x, y, flowPos, nodeId, onClose }: Props) {
   }, [hovered, query]);
 
   const handleAdd = (configId: string) => {
-    addNode(configId, flowPos);
+    const id = addNode(configId, flowPos);
+    // 从输出端拖出后选择节点:自动创建"源节点 → 新节点"连线(取第一个与该输出类型兼容的输入口)
+    if (pendingConn) {
+      const cfg = getConfig(configId);
+      const sock = cfg?.inputs.find((i) => isCompatible(pendingConn.socketType, i.type));
+      if (sock) {
+        onConnect({
+          source: pendingConn.source,
+          target: id,
+          sourceHandle: pendingConn.sourceHandle ?? null,
+          targetHandle: sock.id,
+        });
+      }
+    }
     onClose();
   };
 
@@ -63,7 +79,8 @@ export default function ContextMenu({ x, y, flowPos, nodeId, onClose }: Props) {
             </button>
           </div>
         )}
-        <div className="nf-menu-title">新建节点</div>
+        <div className="nf-menu-title">{pendingConn ? '选择要连接的节点' : '新建节点'}</div>
+        {pendingConn && <div className="nf-menu-conn-hint">选中节点后将自动连接到当前输出端口</div>}
         <input
           className="nf-menu-search"
           autoFocus

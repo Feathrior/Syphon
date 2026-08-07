@@ -21,6 +21,10 @@ function describeOutput(obj: import('../types/data').DataObject | null): string 
       return `${obj.bins.length} 组 / ${obj.sampleCount} 样本`;
     case 'axes':
       return `${obj.dim}D ${obj.xLen}×${obj.yLen}×${obj.zLen} ${obj.xMin}~${obj.xMax}/${obj.yMin}~${obj.yMax} ${obj.axisOrigin === 'origin' ? '原点居中' : '贴左沿'}`;
+    case 'text':
+      return `"${obj.text}" ${obj.fontSize}cm ${obj.halign}/${obj.valign}`;
+    case 'colorbar':
+      return `${obj.stops.length} 段渐变 ${obj.min}~${obj.max}${obj.horizontal === false ? '(垂直)' : ''}`;
   }
 }
 
@@ -188,6 +192,67 @@ function ParamControl({
         </div>
       );
     }
+    case 'gradient': {
+      // 渐变色带编辑器:顶部预览条(点击添加停止点) + 停止点列表(调整位置/颜色/删除)
+      const stops = (Array.isArray(v) ? v : []).map((s, i) => ({
+        ...(typeof s === 'object' && s !== null ? (s as import('../types/data').GradientStop) : { offset: i / 2, color: '#888888' }),
+      }));
+      const previewCss = `linear-gradient(to right, ${stops
+        .map((s) => `${s.color} ${Math.round(s.offset * 100)}%`)
+        .join(', ')})`;
+      const addStop = (offset: number) => {
+        const clamped = Math.max(0, Math.min(1, offset));
+        const sorted = [...stops, { offset: clamped, color: '#f97316' }].sort((a, b) => a.offset - b.offset);
+        onChange(sorted);
+      };
+      const setStop = (i: number, patch: Partial<import('../types/data').GradientStop>) => {
+        onChange(stops.map((s, j) => (j === i ? { ...s, ...patch } : s)).sort((a, b) => a.offset - b.offset));
+      };
+      return (
+        <div className="nf-gradient-editor">
+          <div
+            className="nf-gradient-bar"
+            style={{ background: previewCss }}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              addStop((e.clientX - rect.left) / rect.width);
+            }}
+            title="点击添加停止点"
+          />
+          <div className="nf-gradient-stops">
+            {stops.map((s, i) => (
+              <div key={i} className="nf-gradient-stop-row">
+                <span className="nf-gradient-swatch" style={{ background: s.color }} />
+                <label>位置</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  value={String(s.offset)}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setStop(i, { offset: Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0 });
+                  }}
+                />
+                <label>颜色</label>
+                <input type="color" value={s.color} onChange={(e) => setStop(i, { color: e.target.value })} />
+                <button
+                  className="nf-point-del"
+                  title="删除该停止点"
+                  onClick={() => onChange(stops.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+          <button className="nf-btn nf-btn-sm nf-point-add" onClick={() => addStop(0.5)}>
+            ＋ 添加停止点
+          </button>
+        </div>
+      );
+    }
     default:
       return (
         <input
@@ -202,20 +267,20 @@ function ParamControl({
 
 export default function PropertiesPanel() {
   const selectedId = useGraph((s) => s.selectedId);
-  const nodes = useGraph((s) => s.nodes);
+  // 只订阅所选节点的 data 引用 —— 拖拽位置时 data 引用不变,避免每帧重渲染属性面板
+  const selectedData = useGraph((s) => s.nodes.find((n) => n.id === s.selectedId)?.data);
   const results = useGraph((s) => s.results);
   const updateNodeParams = useGraph((s) => s.updateNodeParams);
   const toggleExposed = useGraph((s) => s.toggleExposed);
   const removeNodes = useGraph((s) => s.removeNodes);
   const duplicateNodes = useGraph((s) => s.duplicateNodes);
 
-  const node = nodes.find((n) => n.id === selectedId);
-  const config = node ? getConfig(node.data.configId) : undefined;
-  const exposedKeys = node?.data.exposed ?? [];
+  const config = selectedData ? getConfig(selectedData.configId) : undefined;
+  const exposedKeys = selectedData?.exposed ?? [];
 
   return (
     <aside className="nf-props">
-      {!node || !config ? (
+      {!selectedData || !config ? (
         <div className="nf-props-empty">
           <div className="nf-props-empty-title">未选择节点</div>
           <p>在画布右键弹出"新建节点"菜单,添加节点开始构建数据处理流程。</p>
@@ -259,7 +324,7 @@ export default function PropertiesPanel() {
                               ? '已暴露(点击取消):节点上已生成输入口,接入数据列后逐点驱动该参数'
                               : '暴露(点击启用):在节点上生成输入口,可接入表格数据列逐点驱动该参数'
                           }
-                          onClick={() => toggleExposed(node.id, p.key)}
+                          onClick={() => toggleExposed(selectedId!, p.key)}
                         >
                           <span className="nf-expose-dot" />
                         </button>
@@ -267,9 +332,9 @@ export default function PropertiesPanel() {
                     </div>
                     <ParamControl
                       spec={p}
-                      nodeId={node.id}
-                      value={node.data.params[p.key]}
-                      onChange={(v) => updateNodeParams(node.id, { [p.key]: v })}
+                      nodeId={selectedId!}
+                      value={selectedData!.params[p.key]}
+                      onChange={(v) => updateNodeParams(selectedId!, { [p.key]: v })}
                     />
                     {p.help && <div className="nf-param-help">{p.help}</div>}
                   </div>
@@ -282,7 +347,7 @@ export default function PropertiesPanel() {
             <div className="nf-props-section">
               <div className="nf-props-section-title">输出状态</div>
               {config.outputs.map((o) => {
-                const obj = results[node.id]?.outputs[o.id];
+                const obj = selectedId ? results[selectedId]?.outputs[o.id] : undefined;
                 return (
                   <div key={o.id} className="nf-out-row">
                     <span className="nf-out-name">{o.name}</span>
@@ -293,8 +358,8 @@ export default function PropertiesPanel() {
                   </div>
                 );
               })}
-              {results[node.id]?.error && (
-                <div className="nf-node-error-text">错误:{results[node.id].error}</div>
+              {selectedId && results[selectedId]?.error && (
+                <div className="nf-node-error-text">错误:{results[selectedId].error}</div>
               )}
             </div>
           )}
@@ -302,10 +367,10 @@ export default function PropertiesPanel() {
           <div className="nf-props-section">
             <div className="nf-props-section-title">节点操作</div>
             <div className="nf-props-actions">
-              <button className="nf-btn nf-btn-sm" onClick={() => duplicateNodes([node.id])}>
+              <button className="nf-btn nf-btn-sm" onClick={() => duplicateNodes([selectedId!])}>
                 复制
               </button>
-              <button className="nf-btn nf-btn-sm nf-btn-danger" onClick={() => removeNodes([node.id])}>
+              <button className="nf-btn nf-btn-sm nf-btn-danger" onClick={() => removeNodes([selectedId!])}>
                 删除
               </button>
             </div>

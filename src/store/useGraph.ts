@@ -33,6 +33,9 @@ interface GraphState {
   selectedId: string | null;
   autoRun: boolean;
   runVersion: number;
+  /** 结构版本号:仅在节点/连线的增删、参数变更、暴露参数切换等结构性变更时递增。
+   *  位置拖拽/选择/折叠等纯视觉变更不递增 —— 避免拖拽节点时反复触发全图重算 */
+  structureVersion: number;
   results: Record<string, ExecResult>;
   hasCycle: boolean;
   lastError: string | null;
@@ -115,6 +118,7 @@ export const useGraph = create<GraphState>((set, get) => ({
   selectedSplitEdgeId: null,
   autoRun: true,
   runVersion: 0,
+  structureVersion: 0,
   results: {},
   hasCycle: false,
   lastError: null,
@@ -124,13 +128,18 @@ export const useGraph = create<GraphState>((set, get) => ({
 
   applyNodeChanges: (changes) => {
     // 删除节点等结构性变更前记录撤销快照(拖拽位置/选择变化不入历史)
-    if (changes.some((c) => c.type === 'remove')) get().snapshotNow();
+    const structural = changes.some((c) => c.type === 'remove' || c.type === 'add');
+    if (structural) get().snapshotNow();
     set({ nodes: applyNodeChanges(changes, get().nodes) });
+    // 仅删除/新增节点时才递增结构版本(位置拖拽/选择/尺寸变化不触发全图重算)
+    if (structural) set({ structureVersion: get().structureVersion + 1 });
   },
 
   applyEdgeChanges: (changes) => {
-    if (changes.some((c) => c.type === 'remove')) get().snapshotNow();
+    const structural = changes.some((c) => c.type === 'remove');
+    if (structural) get().snapshotNow();
     set({ edges: applyEdgeChanges(changes, get().edges) });
+    if (structural) set({ structureVersion: get().structureVersion + 1 });
   },
 
   updateEdgeData: (id, data) => {
@@ -155,6 +164,7 @@ export const useGraph = create<GraphState>((set, get) => ({
     get().snapshotNow();
     set({
       edges: addEdge({ ...conn, ...buildEdgeProps(conn, get().nodes) }, get().edges),
+      structureVersion: get().structureVersion + 1,
     });
     const src = get().nodes.find((n) => n.id === conn.source);
     const tn = get().nodes.find((n) => n.id === conn.target);
@@ -176,7 +186,7 @@ export const useGraph = create<GraphState>((set, get) => ({
       data: { configId, params: defaults, exposed: [], collapsed: false },
       style: { width: nodeWidth(configId) },
     };
-    set({ nodes: [...get().nodes, node], selectedId: id });
+    set({ nodes: [...get().nodes, node], selectedId: id, structureVersion: get().structureVersion + 1 });
     return id;
   },
 
@@ -188,6 +198,7 @@ export const useGraph = create<GraphState>((set, get) => ({
       nodes: get().nodes.filter((n) => !setIds.has(n.id)),
       edges: get().edges.filter((e) => !setIds.has(e.source) && !setIds.has(e.target)),
       selectedId: setIds.has(get().selectedId ?? '') ? null : get().selectedId,
+      structureVersion: get().structureVersion + 1,
     });
   },
 
@@ -215,13 +226,14 @@ export const useGraph = create<GraphState>((set, get) => ({
       nodes: [...get().nodes, ...clones],
       edges: [...get().edges, ...newEdges],
       selectedId: clones[0]?.id ?? null,
+      structureVersion: get().structureVersion + 1,
     });
   },
 
   clearAll: () => {
     if (get().nodes.length === 0) return;
     get().snapshotNow();
-    set({ nodes: [], edges: [], selectedId: null, results: {}, lastError: null });
+    set({ nodes: [], edges: [], selectedId: null, results: {}, lastError: null, structureVersion: get().structureVersion + 1 });
   },
 
   selectNode: (id) => set({ selectedId: id }),
@@ -240,6 +252,7 @@ export const useGraph = create<GraphState>((set, get) => ({
       nodes: get().nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, params: { ...n.data.params, ...patch } } } : n
       ),
+      structureVersion: get().structureVersion + 1,
     });
   },
 
@@ -252,6 +265,7 @@ export const useGraph = create<GraphState>((set, get) => ({
         const exposed = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
         return { ...n, data: { ...n.data, exposed } };
       }),
+      structureVersion: get().structureVersion + 1,
     });
   },
 
@@ -285,6 +299,7 @@ export const useGraph = create<GraphState>((set, get) => ({
       results: {},
       hasCycle: false,
       lastError: null,
+      structureVersion: get().structureVersion + 1,
     });
     get().addLog('info', '已撤销');
   },
@@ -302,6 +317,7 @@ export const useGraph = create<GraphState>((set, get) => ({
       results: {},
       hasCycle: false,
       lastError: null,
+      structureVersion: get().structureVersion + 1,
     });
     get().addLog('info', '已重做');
   },
@@ -396,6 +412,7 @@ export const useGraph = create<GraphState>((set, get) => ({
         results: {},
         hasCycle: false,
         lastError: null,
+        structureVersion: get().structureVersion + 1,
       });
       get().addLog('ok', `已加载画布:${nodes.length} 个节点 / ${edges.length} 条连线`);
       return true;

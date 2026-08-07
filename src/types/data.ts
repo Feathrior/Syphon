@@ -9,7 +9,44 @@ export type SocketType =
   | 'grid' // 规则网格数据
   | 'distribution' // 分布
   | 'axes' // 坐标系
+  | 'text' // 文本
+  | 'colorbar' // 渐变色带
   | 'any'; // 任意
+
+/** 渐变停止点:offset 0~1,color 为颜色 */
+export interface GradientStop {
+  offset: number;
+  color: string;
+}
+
+/** 热力图默认渐变色带(蓝→青→黄→橙→红) */
+export const DEFAULT_GRADIENT: GradientStop[] = [
+  { offset: 0, color: '#4575b4' },
+  { offset: 0.25, color: '#91bfdb' },
+  { offset: 0.5, color: '#ffffbf' },
+  { offset: 0.75, color: '#fc8d59' },
+  { offset: 1, color: '#d73027' },
+];
+
+/** 解析渐变 JSON 字符串(容错:非法时回退默认色带) */
+export function parseGradient(v: unknown): GradientStop[] {
+  if (Array.isArray(v) && v.length > 0) {
+    const stops = v.filter(
+      (s): s is GradientStop =>
+        typeof s === 'object' && s !== null && typeof (s as GradientStop).color === 'string'
+    );
+    if (stops.length > 0) return stops;
+  }
+  if (typeof v === 'string') {
+    try {
+      const parsed = JSON.parse(v);
+      return parseGradient(parsed);
+    } catch {
+      /* 非法 JSON,回退默认 */
+    }
+  }
+  return DEFAULT_GRADIENT;
+}
 
 export interface Column {
   name: string;
@@ -47,6 +84,31 @@ export type DataObject =
   | { kind: 'mesh'; name: string; vertices: [number, number, number][]; faces: [number, number, number][] }
   | { kind: 'grid'; name: string; x: number[]; y: number[]; values: number[][] }
   | { kind: 'distribution'; name: string; bins: { x0: number; x1: number; count: number }[]; sampleCount: number }
+  | {
+      kind: 'text';
+      text: string;
+      /** 文本大小(厘米,在坐标轴盒语境下与图元同比例) */
+      fontSize: number;
+      /** 轴盒内水平位置 */
+      halign: 'left' | 'center' | 'right';
+      /** 轴盒内垂直位置 */
+      valign: 'top' | 'middle' | 'bottom';
+      /** 背景色(空 = 无背景) */
+      bgColor?: string;
+      textColor: string;
+      fontFamily: string;
+    }
+  | {
+      kind: 'colorbar';
+      /** 渐变色带停止点(offset 0~1) */
+      stops: GradientStop[];
+      /** 色带数值范围(标签显示用) */
+      min?: number;
+      max?: number;
+      label?: string;
+      /** 色带方向:水平(默认) / 垂直 */
+      horizontal?: boolean;
+    }
   | {
       kind: 'axes';
       name: string;
@@ -120,7 +182,8 @@ export type ParamSpec =
       expose?: boolean;
     }
   | { key: string; label: string; type: 'button'; default: unknown; action: 'import-csv'; help?: string }
-  | { key: string; label: string; type: 'points'; default: PointInput[]; help?: string };
+  | { key: string; label: string; type: 'points'; default: PointInput[]; help?: string }
+  | { key: string; label: string; type: 'gradient'; default: GradientStop[]; help?: string };
 
 export interface ExecContext {
   nodeId: string;
@@ -151,6 +214,8 @@ export const SOCKET_LABEL: Record<SocketType, string> = {
   grid: '网格数据',
   distribution: '分布',
   axes: '坐标系',
+  text: '文本',
+  colorbar: '色带',
   any: '任意',
 };
 
@@ -162,6 +227,8 @@ export const SOCKET_COLOR: Record<SocketType, string> = {
   grid: '#14b8a6',
   distribution: '#a78bfa',
   axes: '#22d3ee',
+  text: '#e879f9',
+  colorbar: '#38bdf8',
   any: '#94a3b8',
 };
 

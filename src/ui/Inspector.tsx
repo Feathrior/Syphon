@@ -121,26 +121,28 @@ function ObjectPreview({ obj }: { obj: DataObject }) {
 export default function Inspector() {
   const [tab, setTab] = useState<'data' | 'log'>('data');
   const selectedId = useGraph((s) => s.selectedId);
-  const nodes = useGraph((s) => s.nodes);
+  // 只订阅所选节点的 data 引用 —— 拖拽位置时 data 引用不变,避免每帧重渲染 Inspector。
+  // 需要全量节点信息时用 getState() 按需读取(如错误列表的 configId 查找)
+  const selectedData = useGraph((s) => s.nodes.find((n) => n.id === s.selectedId)?.data);
   const results = useGraph((s) => s.results);
   const hasCycle = useGraph((s) => s.hasCycle);
   const lastError = useGraph((s) => s.lastError);
 
-  const node = nodes.find((n) => n.id === selectedId);
-  const config = node ? getConfig(node.data.configId) : undefined;
-  const result = node ? results[node.id] : undefined;
+  const config = selectedData ? getConfig(selectedData.configId) : undefined;
+  const result = selectedId ? results[selectedId] : undefined;
   const logs = useGraph((s) => s.logs);
 
   const errors = useMemo(() => {
     const list: { nodeId: string; label: string; msg: string }[] = [];
+    const allNodes = useGraph.getState().nodes;
     for (const [id, r] of Object.entries(results)) {
       if (r.error) {
-        const cfg = getConfig(nodes.find((n) => n.id === id)?.data.configId ?? '');
+        const cfg = getConfig(allNodes.find((n) => n.id === id)?.data.configId ?? '');
         list.push({ nodeId: id, label: cfg?.label ?? id, msg: r.error });
       }
     }
     return list;
-  }, [results, nodes]);
+  }, [results]);
 
   return (
     <div className="nf-inspector">
@@ -161,7 +163,7 @@ export default function Inspector() {
       </div>
       <div className="nf-inspector-body">
         {tab === 'data' ? (
-          !node || !result ? (
+          !selectedData || !result ? (
             <div className="nf-inspector-hint">点击节点查看输出数据预览</div>
           ) : (
             <div className="nf-inspector-data">

@@ -53,7 +53,14 @@ export function parseDelimitedText(text: string, delimiter: ',' | '\t' = ','): C
   for (let r = startRow; r < rows.length; r++) {
     for (let c = 0; c < width; c++) {
       const raw = (rows[r][c] ?? '').trim();
-      columns[c].values.push(raw === '' ? null : Number(raw));
+      if (raw === '') {
+        columns[c].values.push(null);
+      } else {
+        // 数字字符串转为 Number,非数字字符串(如中文分类标签)保留原始文本。
+        // 否则 Number('收入')=NaN 会破坏桑基图等依赖分类列的图表数据。
+        const n = Number(raw);
+        columns[c].values.push(Number.isNaN(n) ? raw : n);
+      }
     }
   }
   return columns;

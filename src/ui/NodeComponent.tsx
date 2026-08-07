@@ -38,8 +38,9 @@ export const GraphNodeComponent = memo(function GraphNodeComponent({
   const result = useGraph((s) => s.results[id]);
   if (!config) return <div className="nf-node nf-node-error">未知节点</div>;
 
-  // 订阅画布缩放:描边像素不随缩放变化;缩放到一定程度后隐藏节点内部文字
-  const zoom = useStore((s) => s.transform[2]);
+  // 订阅画布缩放:描边像素不随缩放变化;缩放到一定程度后隐藏节点内部文字。
+  // 量化到 0.05 步长 —— 缩放时仅在跨越阈值时重渲染,而非每帧都重渲染全部节点
+  const zoom = useStore((s) => Math.round(s.transform[2] * 20) / 20);
   const { theme } = useTheme();
   const borderWidth = Math.max(0.75, 2 / zoom);
   const bodyHidden = zoom < 0.55;
