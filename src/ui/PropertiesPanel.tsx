@@ -218,7 +218,7 @@ export default function PropertiesPanel() {
       {!node || !config ? (
         <div className="nf-props-empty">
           <div className="nf-props-empty-title">未选择节点</div>
-          <p>按 <kbd className="nf-kbd">Shift+A</kbd> 或在画布右键弹出"新建节点"菜单,添加节点开始构建数据处理流程。</p>
+          <p>在画布右键弹出"新建节点"菜单,添加节点开始构建数据处理流程。</p>
           <ul className="nf-help-list">
             <li><b>组输入</b> — 表格 / 坐标轴 / 线 / 面 / 网格</li>
             <li><b>数据初步</b> — 清洗 / 标准化 / 筛选 / 抽样</li>
