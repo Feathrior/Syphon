@@ -35,7 +35,6 @@ function AppInner() {
   const [boxSelect, setBoxSelect] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const bootstrapped = useRef(false);
-  const mouseRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
   // 启动时从配置文件恢复设置偏好(自动执行 / 主题等)
   useEffect(() => {
@@ -43,14 +42,18 @@ function AppInner() {
   }, []);
 
   // 设置 → 主题:应用到界面并保持与旧版 localStorage 键的兼容
+  // 切换瞬间完成:挂载 nf-no-anim 禁用全局过渡动画,下一帧移除(亮/暗互转无动画)
   const settingsTheme = useSettings((s) => s.theme);
   useEffect(() => {
-    document.documentElement.dataset.theme = settingsTheme;
+    const root = document.documentElement;
+    root.classList.add('nf-no-anim');
+    root.dataset.theme = settingsTheme;
     try {
       localStorage.setItem('syphon-theme', settingsTheme);
     } catch {
       /* ignore */
     }
+    requestAnimationFrame(() => root.classList.remove('nf-no-anim'));
   }, [settingsTheme]);
 
   // 设置 → 自动执行:同步到图数据流 store,保证执行引擎与设置面板一致
@@ -77,7 +80,7 @@ function AppInner() {
     updateNodeParams(ts1, { xCol: 'log2FC', yCol: 'exprA', pointShape: 'circle', pointSize: 5, pointColor: '#1f77b4' });
     updateNodeParams(ts2, { xCol: 'exprB', yCol: 'exprA', pointShape: 'diamond', pointSize: 5, pointColor: '#d62728' });
     updateNodeParams(tline, { xCol: 'log2FC', yCol: 'exprA', lineStyle: 'solid', lineWidth: 2.5, lineColor: '#ff7f0e' });
-    updateNodeParams(ax, { xLen: 1600, yLen: 1000, zLen: 800 });
+    updateNodeParams(ax, { xLen: 16, yLen: 10, zLen: 8 });
     updateNodeParams(vps, { chartType: 'volcano' });
     // 演示暴露参数:将 ts1 的"点大小"暴露为输入口,并把表格首列(log2FC)接入 → 逐点大小与该行数值成正比
     toggleExposed(ts1, 'pointSize');
@@ -111,15 +114,7 @@ function AppInner() {
     setResults(outcome.results, outcome.hasCycle, outcome.hasCycle ? '检测到连接回路' : null);
   }, [nodes, edges, autoRun, runVersion, setResults]);
 
-  // 键盘快捷键:Shift+A 新建节点
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      mouseRef.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
-  }, []);
-
+  // 键盘快捷键:Ctrl+Z/Y 撤销重做、Escape 关闭菜单等
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -141,12 +136,6 @@ function AppInner() {
       if (e.key === 'Escape') {
         setMenu(null);
         return;
-      }
-      if ((e.shiftKey || e.metaKey) && (e.key === 'A' || e.key === 'a')) {
-        if (editing) return;
-        e.preventDefault();
-        const { x, y } = mouseRef.current;
-        setMenu({ x, y, flowPos: screenToFlowPosition({ x, y }) });
       }
     };
     window.addEventListener('keydown', onKey);

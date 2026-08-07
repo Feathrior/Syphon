@@ -44,6 +44,8 @@ interface GraphState {
 
   applyNodeChanges: (changes: NodeChange<GraphNode>[]) => void;
   applyEdgeChanges: (changes: EdgeChange[]) => void;
+  /** 直接合并更新某条连线的 data(如曲线内分割点 mid 的拖拽调整;不入撤销历史) */
+  updateEdgeData: (id: string, data: Record<string, unknown>) => void;
   onConnect: (conn: Connection) => void;
   addNode: (configId: string, position: { x: number; y: number }) => string;
   removeNodes: (ids: string[]) => void;
@@ -123,6 +125,14 @@ export const useGraph = create<GraphState>((set, get) => ({
   applyEdgeChanges: (changes) => {
     if (changes.some((c) => c.type === 'remove')) get().snapshotNow();
     set({ edges: applyEdgeChanges(changes, get().edges) });
+  },
+
+  updateEdgeData: (id, data) => {
+    set({
+      edges: get().edges.map((e) =>
+        e.id === id ? { ...e, data: { ...(e.data as Record<string, unknown> | undefined), ...data } } : e
+      ),
+    });
   },
 
   onConnect: (conn) => {
@@ -300,6 +310,8 @@ export const useGraph = create<GraphState>((set, get) => ({
           target: e.target,
           sourceHandle: e.sourceHandle ?? null,
           targetHandle: e.targetHandle ?? null,
+          // 曲线内部分割点(Alt 拆分,从属于曲线本身)一并持久化
+          mid: (e.data as { mid?: { x: number; y: number } } | undefined)?.mid ?? null,
         })),
       },
       null,
@@ -353,7 +365,13 @@ export const useGraph = create<GraphState>((set, get) => ({
           sourceHandle: (e.sourceHandle as string | null) ?? null,
           targetHandle: (e.targetHandle as string | null) ?? null,
         };
-        return { id: String(e.id ?? genId('e')), ...conn, ...buildEdgeProps(conn, nodes) };
+        const edge: Edge = { id: String(e.id ?? genId('e')), ...conn, ...buildEdgeProps(conn, nodes) };
+        // 恢复曲线内部分割点(Alt 拆分)
+        const mid = e.mid as { x?: number; y?: number } | null | undefined;
+        if (mid && typeof mid.x === 'number' && typeof mid.y === 'number') {
+          edge.data = { mid: { x: mid.x, y: mid.y } };
+        }
+        return edge;
       });
       set({
         nodes,

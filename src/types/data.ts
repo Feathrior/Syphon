@@ -51,16 +51,16 @@ export type DataObject =
       kind: 'axes';
       name: string;
       dim: 2 | 3; // 2D / 3D
-      xLen: number; // X 轴长度(可拉伸,像素)
-      yLen: number; // Y 轴长度(可拉伸,像素)
-      zLen: number; // Z 轴长度(可拉伸,3D)
+      xLen: number; // X 轴长度(厘米,虚拟尺寸,不受画布像素数影响)
+      yLen: number; // Y 轴长度(厘米,虚拟尺寸)
+      zLen: number; // Z 轴长度(厘米,3D)
       xMin: number; // X 起始数字
       xMax: number; // X 结束数字
       yMin: number; // Y 起始数字
       yMax: number; // Y 结束数字
       zMin: number; // Z 起始数字(3D)
       zMax: number; // Z 结束数字(3D)
-      grid: boolean; // 是否显示网格
+      grid: boolean; // 是否显示网格(总开关)
       /** 坐标轴定位方式:以原点为中心(范围内有原点则过原点,否则贴边) / 总贴左边沿 */
       axisOrigin: 'origin' | 'left';
       /** 是否显示坐标系边界边框 */
@@ -68,6 +68,21 @@ export type DataObject =
       labelX: string;
       labelY: string;
       labelZ: string;
+      /** 各轴独立颜色(X/Y/Z) */
+      axisColors?: { x: string; y: string; z: string };
+      /** 各轴线条粗细(厘米) */
+      axisWidths?: { x: number; y: number; z: number };
+      /** 各方向网格线显示状态(X/Y/Z) */
+      gridX?: boolean;
+      gridY?: boolean;
+      gridZ?: boolean;
+      /** 轴文字大小(px,预览基准)与字体 */
+      fontSize?: number;
+      fontFamily?: string;
+      /** 坐标系预设类型 */
+      axisPreset?: string;
+      /** 各轴末端箭头开关(X/Y) */
+      arrows?: { x: boolean; y: boolean };
     };
 
 export type DataMap = Record<string, DataObject>;

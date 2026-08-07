@@ -49,6 +49,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const edges = useGraph((s) => s.edges);
   const applyNodeChanges = useGraph((s) => s.applyNodeChanges);
   const applyEdgeChanges = useGraph((s) => s.applyEdgeChanges);
+  const updateEdgeData = useGraph((s) => s.updateEdgeData);
   const onConnect = useGraph((s) => s.onConnect);
   const selectNode = useGraph((s) => s.selectNode);
   const toggleCollapse = useGraph((s) => s.toggleCollapse);
@@ -69,8 +70,12 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const [hoverEdge, setHoverEdge] = useState<string | null>(null);
   // Ctrl 切断:已切断处短暂标记(划过操作的清晰反馈)
   const [cutFlash, setCutFlash] = useState<{ x: number; y: number; key: number }[]>([]);
+  // Alt+悬停曲线拆分:命中的曲线与拆分点(屏幕坐标),点击后写入曲线内部分割点 data.mid
+  const [altSplit, setAltSplit] = useState<{ edgeId: string; fx: number; fy: number; sx: number; sy: number } | null>(null);
   // 画布 transform:用于 zoom 换算与流坐标→屏幕坐标
   const [viewTx, viewTy, viewZoom] = useStore((s) => s.transform);
+  // 本次连线拖拽是否成功连接(用于松开未连接时自动弹出节点菜单)
+  const justConnectedRef = useRef(false);
 
   useEffect(() => {
     const dn = (e: KeyboardEvent) => {
@@ -84,6 +89,8 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
         setCtrlDown(false);
         setHoverEdge(null);
       }
+      // Alt 松开后立即清除拆分点预览(不再等待下一次 mousemove)
+      if (e.key === 'Alt') setAltSplit(null);
     };
     window.addEventListener('keydown', dn);
     window.addEventListener('keyup', up);
@@ -95,7 +102,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
 
   // Ctrl+滚轮缩放:画布区域交给 React Flow(zoomOnScroll=false + zoomActivationKeyCode="Control");
   // 画布之外的区域(顶栏/属性面板/底部检查器等)由本监听接管,保证"任意位置 Ctrl+滚轮都能整体缩放"
-  const { zoomTo, getViewport } = useReactFlow();
+  const { zoomTo, getViewport, screenToFlowPosition } = useReactFlow();
   useEffect(() => {
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
@@ -154,6 +161,38 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     };
   }, [applyEdgeChanges, addLog]);
 
+  // Alt+悬停曲线:按住 Alt 划过曲线时,实时高亮目标曲线并显示拆分点预览(小圆点)
+  useEffect(() => {
+    const mv = (e: MouseEvent) => {
+      if (!e.altKey) {
+        setAltSplit(null);
+        return;
+      }
+      const el = e.target as Element | null;
+      const edgeEl = el?.closest?.('.react-flow__edge') as HTMLElement | null;
+      const edgeId = edgeEl?.getAttribute('data-id') ?? null;
+      if (!edgeId) {
+        setAltSplit(null);
+        return;
+      }
+      const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const hit = closestOnEdgePath(edgeId, flow.x, flow.y);
+      if (!hit || hit.dist >= HIT) {
+        setAltSplit(null);
+        return;
+      }
+      setAltSplit({
+        edgeId,
+        fx: hit.x,
+        fy: hit.y,
+        sx: hit.x * viewZoom + viewTx,
+        sy: hit.y * viewZoom + viewTy,
+      });
+    };
+    window.addEventListener('mousemove', mv);
+    return () => window.removeEventListener('mousemove', mv);
+  }, [screenToFlowPosition, viewZoom, viewTx, viewTy]);
+
   const isValidConnection: IsValidConnection = useMemo(() => {
     return (conn: Edge | Connection) => {
       const sn = nodes.find((n) => n.id === conn.source);
@@ -189,11 +228,22 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       }
       return true;
     };
-  }, [nodes, addLog]);
+  }, [nodes, edges, addLog]);
 
   const onNodeClick: NodeMouseHandler<GraphNode> = (_, node) => selectNode(node.id);
 
-  // Ctrl+点击连线 → 切断
+  const HIT = 46 / viewZoom; // 命中距离按缩放换算,保证各缩放级别下都容易命中
+
+  // Alt+点击曲线:在命中点写入曲线的内部分割点 data.mid。
+  // 分割点从属于曲线本身(不是节点):让一条贝塞尔曲线外观上分成两段(功能仍是一条连线),
+  // 删除连线时两段与分割点一起消失,用于整理曲线避免杂乱。
+  const splitEdgeAt = (edge: Edge, fx: number, fy: number) => {
+    updateEdgeData(edge.id, { mid: { x: fx, y: fy } });
+    addLog('ok', 'Alt 拆分:曲线已插入分割点(外观两段,功能仍是一条连线)');
+    setAltSplit(null);
+  };
+
+  // 点击连线 → Ctrl 切断 / Alt 在点击处拆分曲线
   const onEdgeClick = (e: React.MouseEvent, edge: Edge) => {
     if (e.ctrlKey) {
       applyEdgeChanges([{ type: 'remove', id: edge.id }]);
@@ -201,11 +251,17 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       const key = Date.now() + Math.random();
       setCutFlash((f) => [...f, { x: e.clientX, y: e.clientY, key }]);
       window.setTimeout(() => setCutFlash((f) => f.filter((it) => it.key !== key)), 420);
+      return;
+    }
+    if (e.altKey) {
+      const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const hit = closestOnEdgePath(edge.id, flow.x, flow.y);
+      if (!hit || hit.dist >= HIT) return;
+      splitEdgeAt(edge, hit.x, hit.y);
     }
   };
 
   // Shift+拖拽节点 → 融入连线中间(拆分连线)。拖拽过程中实时高亮将被切断(插入)的连线并预览插入点
-  const HIT = 46 / viewZoom; // 命中距离按缩放换算,保证各缩放级别下都容易命中
 
   // 贝塞尔曲线路径缓存(键:edge id → 解析后的 SVGPathElement),避免拖拽每帧重复解析
   const pathCacheRef = useRef<Map<string, { el: SVGPathElement; d: string }>>(new Map());
@@ -239,6 +295,17 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       if (dist < best.dist) best = { x: pt.x, y: pt.y, dist };
     }
     return best;
+  };
+
+  // 从输入端(target)拖拽连线,松开时未连上任何输出 → 自动弹出节点菜单,便于直接选择要连接的后方节点
+  const onConnectEnd = (e: MouseEvent | TouchEvent, cs: { fromHandle?: { type?: string } | null }) => {
+    const connected = justConnectedRef.current;
+    justConnectedRef.current = false;
+    if (connected) return;
+    if (cs.fromHandle?.type !== 'target') return;
+    const x = 'clientX' in e ? e.clientX : window.innerWidth / 2;
+    const y = 'clientY' in e ? e.clientY : window.innerHeight / 2;
+    onOpenMenu(x, y);
   };
 
   const onNodeDragStart: OnNodeDrag<GraphNode> = () => {
@@ -306,9 +373,10 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
 
   // Shift 拖拽时高亮将被切断(插入)的连线:加粗 + 亮橙 + 置顶
   // Ctrl 划断时高亮鼠标悬停的连线:加粗 + 红色 + 置顶(清晰提示"将要被划断")
+  // Alt 拆分时高亮鼠标悬停的曲线:加粗 + 紫色 + 置顶(提示"可在此拆分")
   const highlightEdges = useMemo(
     () => {
-      if (!cutHighlight && !hoverEdge) return edges;
+      if (!cutHighlight && !hoverEdge && !altSplit) return edges;
       return edges.map((e) => {
         if (e.id === cutHighlight) {
           return { ...e, style: { ...e.style, stroke: '#f59e0b', strokeWidth: 5 }, zIndex: 100 };
@@ -316,10 +384,13 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
         if (e.id === hoverEdge) {
           return { ...e, style: { ...e.style, stroke: '#ef4444', strokeWidth: 4 }, zIndex: 90 };
         }
+        if (e.id === altSplit?.edgeId) {
+          return { ...e, style: { ...e.style, stroke: '#8b5cf6', strokeWidth: 5 }, zIndex: 95 };
+        }
         return e;
       });
     },
-    [edges, cutHighlight, hoverEdge]
+    [edges, cutHighlight, hoverEdge, altSplit]
   );
 
   return (
@@ -331,7 +402,11 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
         edgeTypes={edgeTypes}
         onNodesChange={applyNodeChanges}
         onEdgesChange={applyEdgeChanges}
-        onConnect={onConnect}
+        onConnect={(conn) => {
+          justConnectedRef.current = true;
+          onConnect(conn);
+        }}
+        onConnectEnd={onConnectEnd}
         onConnectStart={() => invalidRef.current.clear()}
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
@@ -388,6 +463,10 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
           <span className="nf-insert-dot" />
           <span className="nf-insert-label">插入</span>
         </div>
+      )}
+      {/* Alt 拆分点预览:曲线内分割点将插入的位置 */}
+      {altSplit && (
+        <div className="nf-alt-split-dot" style={{ left: altSplit.sx, top: altSplit.sy }} />
       )}
     </div>
   );

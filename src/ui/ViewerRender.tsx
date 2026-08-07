@@ -592,6 +592,23 @@ interface AxesInfo {
   labelX: string;
   labelY: string;
   labelZ: string;
+  /** 各轴独立颜色(缺省时回退到颜色预设的 axis 色) */
+  colorX?: string;
+  colorY?: string;
+  colorZ?: string;
+  /** 各轴线条粗细(厘米) */
+  widthX: number;
+  widthY: number;
+  widthZ: number;
+  /** 各方向网格线显示状态 */
+  gridX: boolean;
+  gridY: boolean;
+  gridZ: boolean;
+  /** 轴文字大小(px,预览基准)与字体 */
+  fontSize: number;
+  fontFamily: string;
+  /** 各轴末端箭头开关(X/Y) */
+  arrows: { x: boolean; y: boolean };
 }
 
 function resolveAxes(input: DataObject | undefined): AxesInfo {
@@ -604,9 +621,9 @@ function resolveAxes(input: DataObject | undefined): AxesInfo {
     const zMax = Number.isFinite(input.zMax) && input.zMax > zMin ? input.zMax : zMin + 10;
     return {
       dim: input.dim === 2 ? 2 : 3,
-      xLen: Math.max(input.xLen, 1),
-      yLen: Math.max(input.yLen, 1),
-      zLen: Math.max(input.zLen, 1),
+      xLen: Math.max(input.xLen, 0.1),
+      yLen: Math.max(input.yLen, 0.1),
+      zLen: Math.max(input.zLen, 0.1),
       xMin,
       xMax,
       yMin,
@@ -619,15 +636,27 @@ function resolveAxes(input: DataObject | undefined): AxesInfo {
       labelX: input.labelX || 'X',
       labelY: input.labelY || 'Y',
       labelZ: input.labelZ || 'Z',
+      colorX: input.axisColors?.x,
+      colorY: input.axisColors?.y,
+      colorZ: input.axisColors?.z,
+      widthX: Math.max(0.02, Number(input.axisWidths?.x ?? 0.12)),
+      widthY: Math.max(0.02, Number(input.axisWidths?.y ?? 0.12)),
+      widthZ: Math.max(0.02, Number(input.axisWidths?.z ?? 0.12)),
+      gridX: input.gridX !== false,
+      gridY: input.gridY !== false,
+      gridZ: input.gridZ !== false,
+      fontSize: Math.max(6, Math.min(24, Number(input.fontSize ?? 10))),
+      fontFamily: input.fontFamily || 'sans-serif',
+      arrows: { x: input.arrows?.x !== false, y: input.arrows?.y !== false },
     };
   }
   // 未连接坐标系时的默认坐标系
-  return { dim: 3, xLen: 10, yLen: 8, zLen: 6, xMin: -5, xMax: 5, yMin: -5, yMax: 5, zMin: -5, zMax: 5, grid: true, axisOrigin: 'origin', showBorder: true, labelX: 'X', labelY: 'Y', labelZ: 'Z' };
+  return { dim: 3, xLen: 10, yLen: 8, zLen: 6, xMin: -5, xMax: 5, yMin: -5, yMax: 5, zMin: -5, zMax: 5, grid: true, axisOrigin: 'origin', showBorder: true, labelX: 'X', labelY: 'Y', labelZ: 'Z', widthX: 0.12, widthY: 0.12, widthZ: 0.12, gridX: true, gridY: true, gridZ: true, fontSize: 10, fontFamily: 'sans-serif', arrows: { x: true, y: true } };
 }
 
-/** 刻度目标数量:按轴像素长度自动确定(密度自适应,Desmos 风格) */
-function targetCount(pxLen: number): number {
-  return Math.max(3, Math.min(10, Math.round(pxLen / 100)));
+/** 刻度目标数量:按轴厘米长度确定(与渲染尺寸无关),保证预览与导出刻度步长完全一致 */
+function targetCount(cmLen: number): number {
+  return Math.max(3, Math.min(10, Math.round(cmLen / 2)));
 }
 
 /** 生成"好看"的刻度(1/2/5×10^k 步长),返回刻度值与步长 */
@@ -718,45 +747,60 @@ function drawScene(
     pMinX = Math.min(pMinX, px); pMaxX = Math.max(pMaxX, px);
     pMinY = Math.min(pMinY, py); pMaxY = Math.max(pMaxY, py);
   }
-  const margin = 0.1;
-  const scale = (Math.min(w, h) * (1 - margin * 2)) / Math.max(pMaxX - pMinX, pMaxY - pMinY, 1);
+  const margin = 0.06;
+  // 画布适配(fit,类比 Windows 背景"适应"):按宽/高两个方向分别计算缩放比后取较小者。
+  // 画布与轴内容宽高比一致时内容紧贴画布(不再留大片空白);不一致时贴合较小方向、另一方向居中。
+  const scale =
+    Math.min(w / Math.max(pMaxX - pMinX, 1), h / Math.max(pMaxY - pMinY, 1)) * (1 - margin * 2);
   const d: DrawCtx = { w, h, scale, ox: w / 2, oy: h / 2, rotX, rotY, ortho2d: axes.dim === 2, ctx };
 
-  // 网格(按自动刻度,密度由像素大小决定)
+  // 像素基准:与轴盒同源于 min(w,h),保证预览与导出(任意画布宽高比)视觉一致:
+  // 187.5 = 300·10/16,取 min(w,h) 的线性比例作为文字/线宽基准,画布越大字越大
+  const fz = Math.max(0.5, Math.min(w, h) / 187.5);
+
+  // 网格(总开关 + 各方向独立开关;刻度按屏幕像素密度自动确定)
   if (axes.grid) {
     ctx.strokeStyle = C.grid;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(0.5, fz);
     ctx.beginPath();
     if (axes.dim === 3) {
-      // 地面网格(XZ 平面 y=yMin)
+      // 地面网格(XZ 平面 y=yMin):X 方向线与 Z 方向线分别受 gridX/gridZ 控制
       const xt = niceTicks(axes.xMin, axes.xMax, targetCount(axes.xLen)).ticks;
       const zt = niceTicks(axes.zMin, axes.zMax, targetCount(axes.zLen)).ticks;
-      for (const t of xt) {
-        const a = project(d, mapP([t, axes.yMin, axes.zMin]));
-        const b = project(d, mapP([t, axes.yMin, axes.zMax]));
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+      if (axes.gridX) {
+        for (const t of xt) {
+          const a = project(d, mapP([t, axes.yMin, axes.zMin]));
+          const b = project(d, mapP([t, axes.yMin, axes.zMax]));
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+        }
       }
-      for (const t of zt) {
-        const a = project(d, mapP([axes.xMin, axes.yMin, t]));
-        const b = project(d, mapP([axes.xMax, axes.yMin, t]));
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+      if (axes.gridZ) {
+        for (const t of zt) {
+          const a = project(d, mapP([axes.xMin, axes.yMin, t]));
+          const b = project(d, mapP([axes.xMax, axes.yMin, t]));
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+        }
       }
     } else {
       const xt = niceTicks(axes.xMin, axes.xMax, targetCount(axes.xLen)).ticks;
       const yt = niceTicks(axes.yMin, axes.yMax, targetCount(axes.yLen)).ticks;
-      for (const t of xt) {
-        const a = project(d, mapP([t, axes.yMin, 0]));
-        const b = project(d, mapP([t, axes.yMax, 0]));
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+      if (axes.gridX) {
+        for (const t of xt) {
+          const a = project(d, mapP([t, axes.yMin, 0]));
+          const b = project(d, mapP([t, axes.yMax, 0]));
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+        }
       }
-      for (const t of yt) {
-        const a = project(d, mapP([axes.xMin, t, 0]));
-        const b = project(d, mapP([axes.xMax, t, 0]));
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+      if (axes.gridY) {
+        for (const t of yt) {
+          const a = project(d, mapP([axes.xMin, t, 0]));
+          const b = project(d, mapP([axes.xMax, t, 0]));
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+        }
       }
     }
     ctx.stroke();
@@ -766,7 +810,7 @@ function drawScene(
   if (axes.showBorder) {
     ctx.strokeStyle = C.axis;
     ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.2 * fz;
     ctx.beginPath();
     const boxEdges: [Vec3, Vec3][] =
       axes.dim === 3
@@ -804,7 +848,7 @@ function drawScene(
     // 空坐标系也绘制坐标轴、刻度与数字
     drawAxes(ctx, d, axes, mapP, C);
     ctx.fillStyle = '#94a3b8';
-    ctx.font = '12px sans-serif';
+    ctx.font = `${Math.max(6, 12 * fz)}px ${axes.fontFamily}`;
     ctx.textAlign = 'center';
     ctx.fillText('无输入数据', w / 2, h / 2);
     return;
@@ -864,7 +908,7 @@ function drawScene(
     }
   }
 
-  // 线(可多路曲线;读取对象携带的线样式,暴露参数可驱动逐段粗细/颜色)
+  // 线(可多路曲线;读取对象携带的线样式,暴露参数可驱动逐段粗细/颜色;粗细随画布宽度等比缩放)
   for (const sr of seriesList) {
     const baseW = Math.max(0.5, Number(sr.lineWidth ?? 2));
     const baseC = sr.lineColor ?? C.line;
@@ -875,13 +919,13 @@ function drawScene(
       const [sx, sy] = project(d, mapP([pts[0][0], pts[0][1], 0]));
       ctx.fillStyle = sr.colors?.[0] ?? baseC;
       ctx.beginPath();
-      ctx.arc(sx, sy, Math.max(1.5, (sr.sizes?.[0] ?? baseW) * 0.9), 0, Math.PI * 2);
+      ctx.arc(sx, sy, Math.max(1.5, (sr.sizes?.[0] ?? baseW) * fz * 0.9), 0, Math.PI * 2);
       ctx.fill();
       continue;
     }
     ctx.setLineDash(style === 'dashed' ? [7, 5] : []);
     for (let i = 0; i < pts.length - 1; i++) {
-      const w = Math.max(0.4, sr.sizes?.[i] ?? baseW);
+      const w = Math.max(0.4, (sr.sizes?.[i] ?? baseW) * fz);
       const c = sr.colors?.[i] ?? baseC;
       ctx.strokeStyle = c;
       ctx.lineWidth = w;
@@ -895,13 +939,13 @@ function drawScene(
     ctx.setLineDash([]);
   }
 
-  // 点(可多路散点;读取对象携带的点样式,暴露参数可驱动逐点大小/颜色;聚合点支持逐点形状)
+  // 点(可多路散点;读取对象携带的点样式,暴露参数可驱动逐点大小/颜色;聚合点支持逐点形状;大小随画布宽度等比缩放)
   for (const sc of scatterList) {
     const baseSize = Math.max(1, Number(sc.pointSize ?? 3));
     const baseColor = sc.pointColor ?? C.point;
     const baseShape = sc.pointShape ?? 'circle';
     sc.points.slice(0, 6000).forEach((p, i) => {
-      const sz = Math.max(0.5, sc.sizes?.[i] ?? baseSize);
+      const sz = Math.max(0.5, (sc.sizes?.[i] ?? baseSize) * fz);
       const col = sc.colors?.[i] ?? baseColor;
       const shp = (sc.shapes?.[i] as 'circle' | 'square' | 'diamond' | 'triangle') ?? baseShape;
       const [sx, sy] = project(d, mapP([p[0], p[1], p[2] ?? 0]));
@@ -914,7 +958,8 @@ function drawScene(
   drawAxes(ctx, d, axes, mapP, C);
 }
 
-/** 绘制坐标轴:2D 支持"以原点为中心/总贴左边沿",刻度按密度自动生成并标注数字;3D 轴过盒中心,正半轴加刻度 */
+/** 绘制坐标轴:2D 支持"以原点为中心/总贴左边沿",刻度按密度自动生成并标注数字;3D 轴过盒中心,正半轴加刻度
+ *  各轴颜色/粗细独立设置(粗细为厘米,按当前渲染比例换算为像素);文字大小与字体可调 */
 function drawAxes(
   ctx: CanvasRenderingContext2D,
   d: DrawCtx,
@@ -922,13 +967,21 @@ function drawAxes(
   mapP: (p: Vec3) => Vec3,
   C: ReturnType<typeof presetColors>
 ) {
+  // 文字缩放基准:与轴盒同源于 min(w,h)(预览/导出一致);轴粗细(厘米)按渲染比例换算
+  const fz = Math.max(0.5, Math.min(d.w, d.h) / 187.5);
+  const fontPx = (base: number) => `${Math.max(6, Math.round(base * fz))}px ${axes.fontFamily}`;
+  const cx = axes.colorX || C.axis;
+  const cy = axes.colorY || C.axis;
+  const cz = axes.colorZ || C.axis;
+  const aw = (cm: number) => Math.max(0.5, cm * d.scale);
+
   if (axes.dim === 2) {
     // 坐标轴位置:原点模式(范围内有原点则过原点,否则贴边) / 总贴左边沿
     const axisX_Y = axes.axisOrigin === 'origin' && 0 >= axes.yMin && 0 <= axes.yMax ? 0 : axes.yMin;
     const axisY_X = axes.axisOrigin === 'origin' && 0 >= axes.xMin && 0 <= axes.xMax ? 0 : axes.xMin;
-    ctx.strokeStyle = C.axis;
-    ctx.lineWidth = 1.6;
     // X 轴(水平,位于 axisX_Y)
+    ctx.strokeStyle = cx;
+    ctx.lineWidth = aw(axes.widthX);
     const x1 = project(d, mapP([axes.xMin, axisX_Y, 0]));
     const x2 = project(d, mapP([axes.xMax, axisX_Y, 0]));
     ctx.beginPath();
@@ -936,6 +989,8 @@ function drawAxes(
     ctx.lineTo(x2[0], x2[1]);
     ctx.stroke();
     // Y 轴(垂直,位于 axisY_X)
+    ctx.strokeStyle = cy;
+    ctx.lineWidth = aw(axes.widthY);
     const y1 = project(d, mapP([axisY_X, axes.yMin, 0]));
     const y2 = project(d, mapP([axisY_X, axes.yMax, 0]));
     ctx.beginPath();
@@ -944,38 +999,63 @@ function drawAxes(
     ctx.stroke();
 
     // 刻度线 + 数字标注(2D 正交投影下轴恒为水平/垂直)
-    ctx.fillStyle = C.axis;
-    ctx.font = '10px sans-serif';
-    ctx.lineWidth = 1;
+    ctx.fillStyle = cx;
+    ctx.font = fontPx(axes.fontSize);
+    ctx.lineWidth = Math.max(1, fz);
     ctx.globalAlpha = 0.85;
     const xt = niceTicks(axes.xMin, axes.xMax, targetCount(axes.xLen));
     for (const t of xt.ticks) {
       const p = project(d, mapP([t, axisX_Y, 0]));
       ctx.beginPath();
-      ctx.moveTo(p[0], p[1] - 4);
-      ctx.lineTo(p[0], p[1] + 4);
+      ctx.moveTo(p[0], p[1] - 4 * fz);
+      ctx.lineTo(p[0], p[1] + 4 * fz);
       ctx.stroke();
       ctx.textAlign = 'center';
-      ctx.fillText(fmtTick(t, xt.step), p[0], p[1] + 14);
+      ctx.fillText(fmtTick(t, xt.step), p[0], p[1] + 14 * fz);
     }
+    ctx.fillStyle = cy;
     const yt = niceTicks(axes.yMin, axes.yMax, targetCount(axes.yLen));
     for (const t of yt.ticks) {
       const p = project(d, mapP([axisY_X, t, 0]));
       ctx.beginPath();
-      ctx.moveTo(p[0] - 4, p[1]);
-      ctx.lineTo(p[0] + 4, p[1]);
+      ctx.moveTo(p[0] - 4 * fz, p[1]);
+      ctx.lineTo(p[0] + 4 * fz, p[1]);
       ctx.stroke();
       ctx.textAlign = 'right';
-      ctx.fillText(fmtTick(t, yt.step), p[0] - 6, p[1] + 3);
+      ctx.fillText(fmtTick(t, yt.step), p[0] - 6 * fz, p[1] + 3 * fz);
     }
     ctx.globalAlpha = 1;
-    // 轴标签
-    ctx.font = '12px sans-serif';
+    // 轴标签(文字略大于刻度数字)
+    ctx.font = fontPx(axes.fontSize + 2);
     ctx.textAlign = 'center';
     const xLab = project(d, mapP([axes.xMax, axisX_Y, 0]));
-    ctx.fillText(axes.labelX, xLab[0], xLab[1] - 6);
     const yLab = project(d, mapP([axisY_X, axes.yMax, 0]));
-    ctx.fillText(axes.labelY, yLab[0] + 8, yLab[1]);
+    if (axes.axisOrigin === 'left') {
+      // 总贴左边沿:轴位于画布外缘,X 标签贴外缘(轴下方),Y 标签侧向旋转 90°(轴左侧)
+      ctx.fillStyle = cx;
+      ctx.fillText(axes.labelX, xLab[0], xLab[1] + 16 * fz);
+      ctx.fillStyle = cy;
+      ctx.save();
+      ctx.translate(yLab[0] - 14 * fz, yLab[1]);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(axes.labelY, 0, 0);
+      ctx.restore();
+    } else {
+      // 以原点为中心:标签位于轴末端上方(X)/右侧(Y)
+      ctx.fillStyle = cx;
+      ctx.fillText(axes.labelX, xLab[0], xLab[1] - 6 * fz);
+      ctx.fillStyle = cy;
+      ctx.fillText(axes.labelY, yLab[0] + 8 * fz, yLab[1]);
+    }
+    // 轴末端箭头(可选):X/Y 轴各按开关绘制实心三角箭头
+    if (axes.arrows.x) {
+      const p0 = project(d, mapP([axes.xMax - (axes.xMax - axes.xMin) * 0.08, axisX_Y, 0]));
+      drawArrow(ctx, p0, xLab, 8 * fz, cx);
+    }
+    if (axes.arrows.y) {
+      const p0 = project(d, mapP([axisY_X, axes.yMax - (axes.yMax - axes.yMin) * 0.08, 0]));
+      drawArrow(ctx, p0, yLab, 8 * fz, cy);
+    }
     return;
   }
 
@@ -996,12 +1076,14 @@ function drawAxes(
   ];
   const scales = [axes.xLen / Math.max(axes.xMax - axes.xMin, 1e-9), axes.yLen / Math.max(axes.yMax - axes.yMin, 1e-9), axes.zLen / Math.max(axes.zMax - axes.zMin, 1e-9)];
   const lengths = [axes.xLen, axes.yLen, axes.zLen];
+  const axisColors = [cx, cy, cz];
+  const axisWidthsCm = [axes.widthX, axes.widthY, axes.widthZ];
   for (const [end, label, axisIdx] of axisEnds) {
     const o = project(d, [0, 0, 0]);
     const ep = project(d, end);
     // 正半轴
-    ctx.strokeStyle = C.axis;
-    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = axisColors[axisIdx];
+    ctx.lineWidth = aw(axisWidthsCm[axisIdx]);
     ctx.beginPath();
     ctx.moveTo(o[0], o[1]);
     ctx.lineTo(ep[0], ep[1]);
@@ -1009,7 +1091,7 @@ function drawAxes(
     // 负半轴(细线)
     const np = project(d, [-end[0], -end[1], -end[2]]);
     ctx.globalAlpha = 0.35;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(0.5, aw(axisWidthsCm[axisIdx]) * 0.5);
     ctx.beginPath();
     ctx.moveTo(o[0], o[1]);
     ctx.lineTo(np[0], np[1]);
@@ -1023,27 +1105,49 @@ function drawAxes(
     const L = Math.hypot(dx, dy) || 1;
     const px = -dy / L;
     const py = dx / L;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(1, fz);
     ctx.globalAlpha = 0.7;
-    ctx.font = '9px sans-serif';
-    ctx.fillStyle = C.axis;
+    ctx.font = fontPx(axes.fontSize - 1);
+    ctx.fillStyle = axisColors[axisIdx];
     for (const t of tk.ticks) {
       const loc = (t - rMin) * scales[axisIdx] - lengths[axisIdx] / 2;
       const tickVec: Vec3 = axisIdx === 0 ? [loc, 0, 0] : axisIdx === 1 ? [0, loc, 0] : [0, 0, loc];
       const tp = project(d, tickVec);
       ctx.beginPath();
-      ctx.moveTo(tp[0] - px * 3.5, tp[1] - py * 3.5);
-      ctx.lineTo(tp[0] + px * 3.5, tp[1] + py * 3.5);
+      ctx.moveTo(tp[0] - px * 3.5 * fz, tp[1] - py * 3.5 * fz);
+      ctx.lineTo(tp[0] + px * 3.5 * fz, tp[1] + py * 3.5 * fz);
       ctx.stroke();
       ctx.textAlign = 'center';
-      ctx.fillText(fmtTick(t, tk.step), tp[0] + (dx / L) * 12, tp[1] + (dy / L) * 12 - 2);
+      ctx.fillText(fmtTick(t, tk.step), tp[0] + (dx / L) * 12 * fz, tp[1] + (dy / L) * 12 * fz - 2 * fz);
     }
     ctx.globalAlpha = 1;
     // 标签
-    ctx.font = '12px sans-serif';
+    ctx.font = fontPx(axes.fontSize + 2);
     ctx.textAlign = 'center';
-    ctx.fillText(label, ep[0], ep[1] - 6);
+    ctx.fillText(label, ep[0], ep[1] - 6 * fz);
+    // 末端箭头(可选):仅 X/Y 轴按开关绘制
+    if ((axisIdx === 0 && axes.arrows.x) || (axisIdx === 1 && axes.arrows.y)) {
+      drawArrow(ctx, o, ep, 8 * fz, axisColors[axisIdx]);
+    }
   }
+}
+
+/** 在 p2 处绘制实心三角箭头(方向沿 p1→p2,size 为箭头长度) */
+function drawArrow(
+  ctx: CanvasRenderingContext2D,
+  p1: [number, number],
+  p2: [number, number],
+  size: number,
+  color: string
+) {
+  const ang = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(p2[0], p2[1]);
+  ctx.lineTo(p2[0] - size * Math.cos(ang - 0.42), p2[1] - size * Math.sin(ang - 0.42));
+  ctx.lineTo(p2[0] - size * Math.cos(ang + 0.42), p2[1] - size * Math.sin(ang + 0.42));
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawTris(
@@ -1087,7 +1191,7 @@ function drawTri(
   if (strokeColor) {
     ctx.strokeStyle = strokeColor;
     ctx.globalAlpha = opacity;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(0.5, Math.min(d.w, d.h) / 187.5);
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -1131,7 +1235,12 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
   const params = node?.data.params ?? {};
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [zoom, setZoom] = useState(1);
+  // 预览缩放与平移:滚轮以鼠标指针位置为锚点缩放,拖拽可改变预览图像位置
+  const [view, setView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
+  const dragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+  // 画布像素大小(本节点参数):同时决定预览/导出白色矩形背景的宽高比与导出 PNG 的像素数量
+  const exportW = Math.round(toNum(params.canvasPxW as number | string | undefined) ?? 1920);
+  const exportH = Math.round(toNum(params.canvasPxH as number | string | undefined) ?? 1200);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -1140,94 +1249,123 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
     const draw = () => {
       const w = wrap.clientWidth;
       if (w <= 0) return;
-      // 预览窗与坐标系尺寸完全等比例(Y : X)
-      const axes = resolveAxes(result?.inputs?.in4);
-      const h = Math.max(60, Math.min(620, (w * axes.yLen) / axes.xLen));
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
+      // 预览窗外围容器(.nf-principled)高度恒定,不随画布(导出宽高比)改变而改变:
+      // 画布按导出宽高比在容器内"适应(contain)"缩放 —— 宽高比与容器一致时紧贴,否则居中。
+      const CONTAINER_H = 230; // 与 .nf-principled 的固定高度一致
+      const BAR_H = 38; // 底部悬浮操作栏高度(画布区域 = 容器高 - 操作栏高)
+      const availH = CONTAINER_H - BAR_H;
+      const ratio = exportH / exportW;
+      // 先按容器宽度铺满,再按比例收紧高度;超高时转以高度为基准收窄宽度,保持宽高比不变
+      let cw = w;
+      let ch = cw * ratio;
+      if (ch > availH) {
+        ch = availH;
+        cw = ch / ratio;
+      }
+      canvas.style.width = `${cw}px`;
+      canvas.style.height = `${ch}px`;
       const dpr = window.devicePixelRatio || 1;
-      const cw = Math.round(w * dpr);
-      const ch = Math.round(h * dpr);
-      if (canvas.width !== cw || canvas.height !== ch) {
-        canvas.width = cw;
-        canvas.height = ch;
+      const pxW = Math.round(cw * dpr);
+      const pxH = Math.round(ch * dpr);
+      if (canvas.width !== pxW || canvas.height !== pxH) {
+        canvas.width = pxW;
+        canvas.height = pxH;
       }
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawScene(ctx, w, h, params, result?.inputs ?? {}, result?.multiInputs ?? {});
+      drawScene(ctx, cw, ch, params, result?.inputs ?? {}, result?.multiInputs ?? {});
+    };
+    // 用 requestAnimationFrame 合并 resize 事件:同一帧内多次触发只重绘一次,
+    // 避免拖动窗口大小时每帧多次全量重绘导致卡顿延迟
+    const rafRef = { id: 0 };
+    const scheduleDraw = () => {
+      cancelAnimationFrame(rafRef.id);
+      rafRef.id = requestAnimationFrame(draw);
     };
     draw();
-    const ro = new ResizeObserver(draw);
+    const ro = new ResizeObserver(scheduleDraw);
     ro.observe(wrap);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(rafRef.id);
+    };
   }, [params, result, nodeId]);
 
-  // 滚轮缩放预览:未按 Ctrl 时缩放预览内容;按住 Ctrl 时交给 React Flow 整体缩放画布
+  // 滚轮缩放预览:未按 Ctrl 时以鼠标指针位置为锚点缩放;按住 Ctrl 时交给 React Flow 整体缩放画布
   const onWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey) return;
     e.preventDefault();
     e.stopPropagation();
-    setZoom((z) => Math.min(4, Math.max(0.5, z * (e.deltaY < 0 ? 1.12 : 1 / 1.12))));
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setView((v) => {
+      const nz = Math.min(4, Math.max(0.5, v.zoom * factor));
+      const f = nz / v.zoom;
+      return { zoom: nz, pan: { x: mx - (mx - v.pan.x) * f, y: my - (my - v.pan.y) * f } };
+    });
   };
 
-  // 导出:按坐标系输入像素大小离屏渲染,自动裁剪到内容边缘(只留少量白边)
+  // 拖拽平移:放大预览后按住并拖动可改变预览图像位置
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: view.pan.x, panY: view.pan.y };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setView((v) => ({ ...v, pan: { x: d.panX + e.clientX - d.startX, y: d.panY + e.clientY - d.startY } }));
+  };
+  const onPointerUp = () => {
+    dragRef.current = null;
+  };
+
+  // 初始化:重置预览缩放与平移(大小和方向恢复默认)
+  const resetView = () => {
+    setView({ zoom: 1, pan: { x: 0, y: 0 } });
+  };
+
+  // 导出:按"画布像素大小"参数离屏渲染,白色矩形背景即画布宽高,输出完整画布(不裁剪内容)
   const handleExport = async () => {
-    const axes = resolveAxes(result?.inputs?.in4);
-    const w = Math.max(100, Math.min(12000, Math.round(axes.xLen)));
-    const h = Math.max(100, Math.min(12000, Math.round(axes.yLen)));
+    const w = Math.max(100, Math.min(12000, exportW));
+    const h = Math.max(100, Math.min(12000, exportH));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     drawScene(ctx, w, h, params, result?.inputs ?? {}, result?.multiInputs ?? {});
-    // 扫描内容 bbox(与背景色不同的像素),随后裁剪 + 少量留白
-    const C = presetColors(params);
-    const data = ctx.getImageData(0, 0, w, h).data;
-    const m = C.bg.match(/#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
-    const [br, bgG, bgB] = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [255, 255, 255];
-    let minX = w, minY = h, maxX = -1, maxY = -1;
-    const step = Math.max(1, Math.floor(Math.min(w, h) / 800));
-    for (let y = 0; y < h; y += step) {
-      for (let x = 0; x < w; x += step) {
-        const i = (y * w + x) * 4;
-        if (Math.abs(data[i] - br) + Math.abs(data[i + 1] - bgG) + Math.abs(data[i + 2] - bgB) > 24) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    if (maxX < minX || maxY < minY) {
-      minX = 0;
-      minY = 0;
-      maxX = w - 1;
-      maxY = h - 1;
-    }
-    const pad = 6;
-    const cw = maxX - minX + 1 + pad * 2;
-    const ch = maxY - minY + 1 + pad * 2;
-    const out = document.createElement('canvas');
-    out.width = cw;
-    out.height = ch;
-    const octx = out.getContext('2d');
-    if (!octx) return;
-    octx.fillStyle = C.bg;
-    octx.fillRect(0, 0, cw, ch);
-    octx.drawImage(canvas, minX, minY, maxX - minX + 1, maxY - minY + 1, pad, pad, maxX - minX + 1, maxY - minY + 1);
-    await savePngFile(out.toDataURL('image/png'), 'principled.png');
+    await savePngFile(canvas.toDataURL('image/png'), 'principled.png');
   };
 
   return (
     <div ref={wrapRef} className="nf-principled">
-      {/* 仅画布缩放(等比 transform);操作栏/标题不随滚轮缩放 */}
-      <div className="nf-chart-scale" style={{ transform: `scale(${zoom})` }} onWheel={onWheel}>
+      {/* 仅画布缩放/平移(等比 transform);操作栏/标题不随滚轮缩放 */}
+      <div
+        className="nf-chart-scale"
+        style={{ transform: `translate(${view.pan.x}px, ${view.pan.y}px) scale(${view.zoom})` }}
+        onWheel={onWheel}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
         <canvas ref={canvasRef} />
       </div>
       <div className="nf-viewer-actions">
-        <span className="nf-zoom-hint">{Math.round(zoom * 100)}%</span>
+        <span className="nf-zoom-hint">
+          {Math.round(view.zoom * 100)}%
+          <span className="nf-export-size">
+            · 导出 {exportW}×{exportH}px
+          </span>
+        </span>
+        <button className="nf-btn nf-btn-sm nf-reset-btn" onClick={resetView} title="重置预览缩放与位置">
+          初始化
+        </button>
         <button className="nf-btn nf-btn-sm nf-export-btn" onClick={handleExport}>
           导出 PNG
         </button>

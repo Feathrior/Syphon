@@ -82,12 +82,37 @@ const execTableInput: ExecFn = ({ params }) => {
   return { out0: { kind: 'table', columns: presetTable(str(params.preset, 'phys')) } };
 };
 
+// ---------- 坐标系(厘米制虚拟尺寸) ----------
+/** 坐标系预设:提供基础轴样式。单独设置的字段仅在用户自定义(与"默认"预设不同)时覆盖预设值 */
+const AXIS_PRESETS: Record<
+  string,
+  {
+    colorX: string;
+    colorY: string;
+    colorZ: string;
+    widthX: number;
+    widthY: number;
+    widthZ: number;
+    gridX: boolean;
+    gridY: boolean;
+    gridZ: boolean;
+    border: boolean;
+  }
+> = {
+  default: { colorX: '#333333', colorY: '#333333', colorZ: '#333333', widthX: 0.12, widthY: 0.12, widthZ: 0.12, gridX: true, gridY: true, gridZ: true, border: true },
+  math: { colorX: '#111111', colorY: '#111111', colorZ: '#111111', widthX: 0.08, widthY: 0.08, widthZ: 0.08, gridX: true, gridY: true, gridZ: true, border: true },
+  engineering: { colorX: '#1f77b4', colorY: '#2ca02c', colorZ: '#d62728', widthX: 0.16, widthY: 0.16, widthZ: 0.16, gridX: true, gridY: true, gridZ: true, border: true },
+  minimal: { colorX: '#666666', colorY: '#666666', colorZ: '#666666', widthX: 0.08, widthY: 0.08, widthZ: 0.08, gridX: false, gridY: false, gridZ: false, border: true },
+  borderless: { colorX: '#333333', colorY: '#333333', colorZ: '#333333', widthX: 0.12, widthY: 0.12, widthZ: 0.12, gridX: true, gridY: true, gridZ: true, border: false },
+};
+
 const execAxis: ExecFn = ({ params }) => {
   const name = str(params.name, '坐标系');
   const dim = str(params.dim, '3d') === '2d' ? 2 : 3;
-  const xLen = Math.max(100, num(params.xLen, 1600));
-  const yLen = Math.max(100, num(params.yLen, 1000));
-  const zLen = Math.max(100, num(params.zLen, 800));
+  // 厘米制虚拟尺寸:只定义比例关系,与画布实际像素数量无关
+  const xLen = Math.max(0.5, num(params.xLen, 16));
+  const yLen = Math.max(0.5, num(params.yLen, 10));
+  const zLen = Math.max(0.5, num(params.zLen, 8));
   const grid = params.grid !== false;
   // 数据范围(x/y 起始与结束数字,支持 10→100 等任意区间)
   let xMin = num(params.xStart, 0);
@@ -100,12 +125,61 @@ const execAxis: ExecFn = ({ params }) => {
   if (yMax - yMin < 1e-9) yMax = yMin + 1;
   if (zMax - zMin < 1e-9) zMax = zMin + 1;
   const axisOrigin = str(params.axisOrigin, 'origin') === 'left' ? 'left' : 'origin';
-  const showBorder = params.showBorder !== false;
   const labelX = str(params.labelX, 'X') || 'X';
   const labelY = str(params.labelY, 'Y') || 'Y';
   const labelZ = str(params.labelZ, 'Z') || 'Z';
+
+  // 预设作为基础样式,单独字段(与"默认"预设不同即视为已自定义)覆盖预设
+  const base = AXIS_PRESETS[str(params.axisPreset, 'default')] ?? AXIS_PRESETS.default;
+  const pick = <K extends keyof typeof AXIS_PRESETS.default>(v: unknown, key: K) =>
+    v !== undefined && v !== AXIS_PRESETS.default[key] ? (v as (typeof AXIS_PRESETS.default)[K]) : base[key];
+  const showBorder = pick(params.showBorder, 'border') !== false;
+  const colorX = String(pick(params.axisColorX, 'colorX'));
+  const colorY = String(pick(params.axisColorY, 'colorY'));
+  const colorZ = String(pick(params.axisColorZ, 'colorZ'));
+  const widthX = Math.max(0.02, num(pick(params.axisWidthX, 'widthX'), 0.12));
+  const widthY = Math.max(0.02, num(pick(params.axisWidthY, 'widthY'), 0.12));
+  const widthZ = Math.max(0.02, num(pick(params.axisWidthZ, 'widthZ'), 0.12));
+  const gridX = pick(params.gridX, 'gridX') !== false;
+  const gridY = pick(params.gridY, 'gridY') !== false;
+  const gridZ = pick(params.gridZ, 'gridZ') !== false;
+
+  const fontSize = Math.max(6, Math.min(24, num(params.fontSize, 10)));
+  const fontFamily = str(params.fontFamily, 'sans-serif');
+  // 轴末端箭头开关(X/Y)
+  const arrowX = params.arrowX !== false;
+  const arrowY = params.arrowY !== false;
+
   return {
-    out0: { kind: 'axes', name, dim, xLen, yLen, zLen, xMin, xMax, yMin, yMax, zMin, zMax, grid, axisOrigin, showBorder, labelX, labelY, labelZ },
+    out0: {
+      kind: 'axes',
+      name,
+      dim,
+      xLen,
+      yLen,
+      zLen,
+      xMin,
+      xMax,
+      yMin,
+      yMax,
+      zMin,
+      zMax,
+      grid,
+      axisOrigin,
+      showBorder,
+      labelX,
+      labelY,
+      labelZ,
+      axisColors: { x: colorX, y: colorY, z: colorZ },
+      axisWidths: { x: widthX, y: widthY, z: widthZ },
+      gridX,
+      gridY,
+      gridZ,
+      fontSize,
+      fontFamily,
+      axisPreset: str(params.axisPreset, 'default'),
+      arrows: { x: arrowX, y: arrowY },
+    },
   };
 };
 

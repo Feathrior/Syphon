@@ -75,6 +75,14 @@
   box-sizing: border-box;
 }
 
+/* 主题切换瞬间完成(无动画):切换数据主题前临时挂载该 class,
+   禁用全部 transition/animation,下一帧移除后恢复 */
+.nf-no-anim,
+.nf-no-anim * {
+  transition: none !important;
+  animation: none !important;
+}
+
 html,
 body,
 #root {
@@ -93,24 +101,47 @@ body {
 
 /* ============ 应用骨架 ============ */
 .nf-app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
   background: var(--bg-app);
 }
 
-/* ============ 工具栏 ============ */
+/* ============ 工具栏(高斯模糊毛玻璃) ============
+   悬浮于画布之上,画布内容滚动经过时被模糊;
+   模糊放在 ::before 伪元素上(避免 backdrop-filter 使
+   固定定位的菜单遮罩以工具栏为包含块而失效)。 */
 .nf-toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 900;
   display: flex;
   align-items: center;
   gap: 10px;
   height: 48px;
   padding: 0 14px;
-  background: var(--bg-toolbar);
+  background: transparent;
   border-bottom: 1px solid var(--stroke);
   flex-shrink: 0;
   user-select: none;
-  transition: background-color 0.3s var(--ease), border-color 0.3s var(--ease);
+}
+
+.nf-toolbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(255, 255, 255, 0.66);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  transition: background-color 0.3s var(--ease);
+}
+
+[data-theme='dark'] .nf-toolbar::before {
+  background: rgba(43, 43, 43, 0.66);
 }
 
 .nf-brand {
@@ -862,7 +893,7 @@ body {
 
 .nf-node.nf-selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-glow);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 8px var(--accent-glow);
 }
 
 .nf-node-header {
@@ -873,7 +904,8 @@ body {
   border-bottom: 1px solid var(--stroke);
   position: relative;
   cursor: grab;
-  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  /* 上圆角比节点本体小 2px:着色部分贴合边框,消除视觉偏差 */
+  border-radius: 6px 6px 0 0;
 }
 
 .nf-node-header:active {
@@ -1088,16 +1120,21 @@ body {
   height: 230px;
 }
 
-/* 仅图表本身缩放;预览窗其它元素(工具栏/标题)不随滚轮缩放 */
+/* 仅图表本身缩放/平移;预览窗其它元素(工具栏/标题)不随滚轮缩放 */
 .nf-chart-scale {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transform-origin: center center;
-  transition: transform 0.16s var(--ease);
+  transform-origin: 0 0; /* 左上角为原点,配合 translate/scale 实现指针锚定缩放与拖拽平移 */
+  cursor: grab;
+  touch-action: none;
   will-change: transform;
+}
+
+.nf-chart-scale:active {
+  cursor: grabbing;
 }
 
 .nf-zoom-hint {
@@ -1107,6 +1144,11 @@ body {
   margin-right: auto;
 }
 
+.nf-export-size {
+  margin-left: 6px;
+  opacity: 0.75;
+}
+
 .nf-canvas {
   width: 100%;
   height: 230px;
@@ -1114,8 +1156,12 @@ body {
 }
 
 .nf-principled {
+  position: relative;
   width: 100%;
+  height: 230px; /* 预览窗外围容器高度恒定,不随画布(导出宽高比)改变 */
   overflow: hidden;
+  /* 底部预留悬浮操作栏高度,画布本身不被操作栏遮挡 */
+  padding-bottom: 38px;
 }
 
 .nf-principled canvas {
@@ -1123,12 +1169,21 @@ body {
   width: 100%;
 }
 
-.nf-viewer-actions {
+/* 原理化预览:操作栏悬浮于预览窗底部(缩放放大后仍始终可见,不被缩放图片遮挡) */
+.nf-principled .nf-viewer-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
   display: flex;
   justify-content: flex-end;
-  padding: 6px 8px;
+  align-items: center;
+  /* 增大横向留白、减小圆角:贴合预览窗底部,消除视觉偏差 */
+  padding: 7px 12px;
   background: var(--bg-raise);
   border-top: 1px solid var(--stroke);
+  border-radius: 0 0 6px 6px;
 }
 
 .nf-export-btn {
@@ -1137,6 +1192,15 @@ body {
 
 .nf-export-btn:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.nf-reset-btn {
+  color: var(--text-dim);
+}
+
+.nf-reset-btn:hover {
+  color: var(--text);
+  background: var(--bg-float);
 }
 
 .nf-output-table {
@@ -1199,7 +1263,7 @@ body {
   line-height: 1.5;
 }
 
-/* ============ 右键 / Shift+A 菜单 ============ */
+/* ============ 右键菜单 ============ */
 .nf-menu-overlay {
   position: fixed;
   inset: 0;
@@ -1741,6 +1805,20 @@ select option {
   border-radius: 4px;
   white-space: nowrap;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Alt 拆分点预览:小圆点连接点将插入的位置 */
+.nf-alt-split-dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25), 0 0 8px rgba(139, 92, 246, 0.6);
+  z-index: 1000;
+  pointer-events: none;
 }
 
 /* ============ 设置弹窗(VSCode 风格) ============ */
