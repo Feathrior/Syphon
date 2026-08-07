@@ -1973,6 +1973,37 @@ select option {
   margin-right: auto;
 }
 
+/* ---- 快捷键面板(复用设置页模态框,内容为分组快捷键列表) ---- */
+.nf-shortcuts {
+  width: 560px;
+}
+
+.nf-shortcuts-body {
+  overflow-y: auto;
+  max-height: calc(100vh - 240px);
+}
+
+.nf-shortcuts-group {
+  margin-bottom: 16px;
+}
+
+.nf-shortcuts-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--stroke);
+}
+
+.nf-shortcuts-row:last-child {
+  border-bottom: none;
+}
+
+.nf-shortcuts-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 /* Fluent 风格开关 */
 .nf-switch {
   position: relative;

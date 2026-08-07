@@ -44,8 +44,13 @@ interface GraphState {
 
   applyNodeChanges: (changes: NodeChange<GraphNode>[]) => void;
   applyEdgeChanges: (changes: EdgeChange[]) => void;
-  /** 直接合并更新某条连线的 data(如曲线内分割点 mid 的拖拽调整;不入撤销历史) */
+  /** 直接合并更新某条连线的 data(如曲线内分割点 mid 的拖拽调整;不入撤销历史)。
+   *  值为 undefined 的键视为"删除该字段"(如清除分割点 mid,曲线恢复原始形状) */
   updateEdgeData: (id: string, data: Record<string, unknown>) => void;
+  /** 当前被选中的曲线内分割点(所属曲线 id;可单独选中,Delete 删除后曲线恢复原始形状) */
+  selectedSplitEdgeId: string | null;
+  /** 选中 / 取消选中曲线内分割点 */
+  selectSplitEdge: (id: string | null) => void;
   onConnect: (conn: Connection) => void;
   addNode: (configId: string, position: { x: number; y: number }) => string;
   removeNodes: (ids: string[]) => void;
@@ -107,6 +112,7 @@ export const useGraph = create<GraphState>((set, get) => ({
   nodes: [],
   edges: [],
   selectedId: null,
+  selectedSplitEdgeId: null,
   autoRun: true,
   runVersion: 0,
   results: {},
@@ -129,11 +135,21 @@ export const useGraph = create<GraphState>((set, get) => ({
 
   updateEdgeData: (id, data) => {
     set({
-      edges: get().edges.map((e) =>
-        e.id === id ? { ...e, data: { ...(e.data as Record<string, unknown> | undefined), ...data } } : e
-      ),
+      edges: get().edges.map((e) => {
+        if (e.id !== id) return e;
+        const prev = (e.data as Record<string, unknown> | undefined) ?? {};
+        const next = { ...prev };
+        // 值为 undefined 的键 → 删除该字段(如清除分割点 mid,曲线恢复原始三次贝塞尔)
+        for (const [k, v] of Object.entries(data)) {
+          if (v === undefined) delete next[k];
+          else next[k] = v;
+        }
+        return { ...e, data: next };
+      }),
     });
   },
+
+  selectSplitEdge: (id) => set({ selectedSplitEdgeId: id }),
 
   onConnect: (conn) => {
     get().snapshotNow();

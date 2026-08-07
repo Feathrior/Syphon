@@ -52,6 +52,7 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   const updateEdgeData = useGraph((s) => s.updateEdgeData);
   const onConnect = useGraph((s) => s.onConnect);
   const selectNode = useGraph((s) => s.selectNode);
+  const selectSplitEdge = useGraph((s) => s.selectSplitEdge);
   const toggleCollapse = useGraph((s) => s.toggleCollapse);
   const snapshotNow = useGraph((s) => s.snapshotNow);
   const addLog = useGraph((s) => s.addLog);
@@ -98,6 +99,23 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
       window.removeEventListener('keydown', dn);
       window.removeEventListener('keyup', up);
     };
+  }, []);
+
+  // 删除选中的曲线内分割点:Delete/Backspace(曲线恢复原始三次贝塞尔,整条连线保留)。
+  // 用捕获阶段监听,先于 React Flow 自带的"删除选中节点/连线"处理,避免误删其它元素
+  useEffect(() => {
+    const del = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const st = useGraph.getState();
+      if (!st.selectedSplitEdgeId) return;
+      e.preventDefault();
+      const id = st.selectedSplitEdgeId;
+      st.updateEdgeData(id, { mid: undefined });
+      st.selectSplitEdge(null);
+      st.addLog('ok', '已删除分割点:曲线恢复为原始形状');
+    };
+    window.addEventListener('keydown', del, true);
+    return () => window.removeEventListener('keydown', del, true);
   }, []);
 
   // Ctrl+滚轮缩放:画布区域交给 React Flow(zoomOnScroll=false + zoomActivationKeyCode="Control");
@@ -230,7 +248,11 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     };
   }, [nodes, edges, addLog]);
 
-  const onNodeClick: NodeMouseHandler<GraphNode> = (_, node) => selectNode(node.id);
+  const onNodeClick: NodeMouseHandler<GraphNode> = (_, node) => {
+    selectNode(node.id);
+    // 点击节点时取消分割点选中
+    selectSplitEdge(null);
+  };
 
   const HIT = 46 / viewZoom; // 命中距离按缩放换算,保证各缩放级别下都容易命中
 
@@ -243,8 +265,10 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
     setAltSplit(null);
   };
 
-  // 点击连线 → Ctrl 切断 / Alt 在点击处拆分曲线
+  // 点击连线本体 → Ctrl 切断 / Alt 在点击处拆分曲线(点击小圆点已被其自身捕获,不会到这里)
   const onEdgeClick = (e: React.MouseEvent, edge: Edge) => {
+    // 点击连线本体时取消分割点选中
+    selectSplitEdge(null);
     if (e.ctrlKey) {
       applyEdgeChanges([{ type: 'remove', id: edge.id }]);
       addLog('info', `Ctrl 切断:${edge.source} → ${edge.target}`);
@@ -414,7 +438,10 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
-        onPaneClick={() => selectNode(null)}
+        onPaneClick={() => {
+          selectNode(null);
+          selectSplitEdge(null);
+        }}
         onPaneContextMenu={(e) => {
           e.preventDefault();
           onOpenMenu(e.clientX, e.clientY);

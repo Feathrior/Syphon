@@ -10,6 +10,7 @@ interface Props {
   boxSelect: boolean;
   setBoxSelect: (v: boolean) => void;
   onOpenSettings: () => void;
+  onOpenShortcuts: () => void;
 }
 
 /* ---------------- Fluent 线性图标(24 viewBox) ---------------- */
@@ -156,6 +157,17 @@ const InfoIcon = () => (
   />
 );
 
+const KeyboardIcon = () => (
+  <Icon
+    d={
+      <>
+        <rect x="2.5" y="6" width="19" height="12" rx="2" />
+        <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" />
+      </>
+    }
+  />
+);
+
 const CheckIcon = () => <Icon d={<path d="M20 6 9 17l-5-5" />} sw={2} />;
 
 /* ---------------- 窗口控制图标(最小化/最大化/还原/关闭) ---------------- */
@@ -179,7 +191,7 @@ type MenuItem =
   | { kind: 'item'; label: string; shortcut?: string; icon: React.ReactNode; danger?: boolean; action: () => void }
   | { kind: 'sep' };
 
-export default function Toolbar({ boxSelect, setBoxSelect, onOpenSettings }: Props) {
+export default function Toolbar({ boxSelect, setBoxSelect, onOpenSettings, onOpenShortcuts }: Props) {
   const { fitView } = useReactFlow();
   const { theme, toggleTheme } = useTheme();
   const bumpRun = useGraph((s) => s.bumpRun);
@@ -273,7 +285,11 @@ export default function Toolbar({ boxSelect, setBoxSelect, onOpenSettings }: Pro
     { kind: 'item', label: '适应视图', icon: <FitViewIcon />, action: () => fitView({ padding: 0.25 }) },
     { kind: 'item', label: '一键整理', icon: <LayoutIcon />, action: handleAutoLayout },
   ];
-  const helpMenu: MenuItem[] = [{ kind: 'item', label: '关于 Syphon', icon: <InfoIcon />, action: handleAbout }];
+  const helpMenu: MenuItem[] = [
+    { kind: 'item', label: '快捷键', icon: <KeyboardIcon />, action: onOpenShortcuts },
+    { kind: 'sep' },
+    { kind: 'item', label: '关于 Syphon', icon: <InfoIcon />, action: handleAbout },
+  ];
 
   const menus: { id: string; label: string; items: MenuItem[] }[] = [
     { id: 'file', label: '文件', items: fileMenu },

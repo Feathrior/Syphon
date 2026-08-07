@@ -747,16 +747,18 @@ function drawScene(
     pMinX = Math.min(pMinX, px); pMaxX = Math.max(pMaxX, px);
     pMinY = Math.min(pMinY, py); pMaxY = Math.max(pMaxY, py);
   }
-  const margin = 0.06;
-  // 画布适配(fit,类比 Windows 背景"适应"):按宽/高两个方向分别计算缩放比后取较小者。
-  // 画布与轴内容宽高比一致时内容紧贴画布(不再留大片空白);不一致时贴合较小方向、另一方向居中。
-  const scale =
-    Math.min(w / Math.max(pMaxX - pMinX, 1), h / Math.max(pMaxY - pMinY, 1)) * (1 - margin * 2);
-  const d: DrawCtx = { w, h, scale, ox: w / 2, oy: h / 2, rotX, rotY, ortho2d: axes.dim === 2, ctx };
-
   // 像素基准:与轴盒同源于 min(w,h),保证预览与导出(任意画布宽高比)视觉一致:
   // 187.5 = 300·10/16,取 min(w,h) 的线性比例作为文字/线宽基准,画布越大字越大
   const fz = Math.max(0.5, Math.min(w, h) / 187.5);
+  // 画布四周内容内边距(像素):为刻度数字 / 轴标签 / 末端箭头预留空间,
+  // 避免内容与画布边缘贴得过近导致部分数字被裁切(2D 轴标签最大偏移约 16fz)
+  const pad = Math.max(30, 20 * fz);
+  // 画布适配(fit,类比 Windows 背景"适应"):按宽/高两个方向分别计算缩放比后取较小者。
+  // 画布与轴内容宽高比一致时内容紧贴画布(仅保留文字所需安全边距,不再留大片空白);
+  // 不一致时贴合较小方向、另一方向居中。
+  const scale =
+    Math.min((w - 2 * pad) / Math.max(pMaxX - pMinX, 1), (h - 2 * pad) / Math.max(pMaxY - pMinY, 1));
+  const d: DrawCtx = { w, h, scale, ox: w / 2, oy: h / 2, rotX, rotY, ortho2d: axes.dim === 2, ctx };
 
   // 网格(总开关 + 各方向独立开关;刻度按屏幕像素密度自动确定)
   if (axes.grid) {

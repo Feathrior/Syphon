@@ -10,6 +10,7 @@ import PropertiesPanel from './ui/PropertiesPanel';
 import Inspector from './ui/Inspector';
 import StatusBar from './ui/StatusBar';
 import SettingsPanel from './ui/SettingsPanel';
+import ShortcutsPanel from './ui/ShortcutsPanel';
 import './styles.css';
 
 function AppInner() {
@@ -34,6 +35,7 @@ function AppInner() {
   } | null>(null);
   const [boxSelect, setBoxSelect] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const bootstrapped = useRef(false);
 
   // 启动时从配置文件恢复设置偏好(自动执行 / 主题等)
@@ -148,7 +150,12 @@ function AppInner() {
 
   return (
     <div className="nf-app">
-      <Toolbar boxSelect={boxSelect} setBoxSelect={setBoxSelect} onOpenSettings={() => setSettingsOpen(true)} />
+      <Toolbar
+        boxSelect={boxSelect}
+        setBoxSelect={setBoxSelect}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+      />
       <div className="nf-main">
         <NodeCanvas onOpenMenu={openMenu} boxSelect={boxSelect} />
         <PropertiesPanel />
@@ -165,6 +172,7 @@ function AppInner() {
         />
       )}
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }
