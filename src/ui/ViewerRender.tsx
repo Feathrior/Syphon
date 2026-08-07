@@ -479,9 +479,24 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     const notMerge = prevTypeRef.current !== chartType;
     prevTypeRef.current = chartType;
     chartRef.current.setOption(option, notMerge);
-    const ro = new ResizeObserver(() => chartRef.current?.resize());
+    // ECharts resize 节流 + 防抖:连续 resize 时限制重绘频率(约 25fps),
+    // 停止后延迟一次兜底精确重绘,避免窗口缩放时每帧全量重绘导致卡顿
+    let lastResize = 0;
+    let timer = 0;
+    const onResize = () => {
+      if (performance.now() - lastResize >= 40) {
+        lastResize = performance.now();
+        chartRef.current?.resize();
+      }
+      clearTimeout(timer);
+      timer = window.setTimeout(() => chartRef.current?.resize(), 120);
+    };
+    const ro = new ResizeObserver(onResize);
     ro.observe(ref.current);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      clearTimeout(timer);
+    };
   }, [params, result, nodeId, chartType]);
 
   useEffect(() => {
@@ -751,8 +766,9 @@ function drawScene(
   // 187.5 = 300·10/16,取 min(w,h) 的线性比例作为文字/线宽基准,画布越大字越大
   const fz = Math.max(0.5, Math.min(w, h) / 187.5);
   // 画布四周内容内边距(像素):为刻度数字 / 轴标签 / 末端箭头预留空间,
-  // 避免内容与画布边缘贴得过近导致部分数字被裁切(2D 轴标签最大偏移约 16fz)
-  const pad = Math.max(30, 20 * fz);
+  // 避免内容与画布边缘贴得过近导致部分数字被裁切
+  // (2D 轴标签最大偏移约 24fz,取 24fz + 余量)
+  const pad = Math.max(34, 24 * fz);
   // 画布适配(fit,类比 Windows 背景"适应"):按宽/高两个方向分别计算缩放比后取较小者。
   // 画布与轴内容宽高比一致时内容紧贴画布(仅保留文字所需安全边距,不再留大片空白);
   // 不一致时贴合较小方向、另一方向居中。
@@ -1033,12 +1049,15 @@ function drawAxes(
     const xLab = project(d, mapP([axes.xMax, axisX_Y, 0]));
     const yLab = project(d, mapP([axisY_X, axes.yMax, 0]));
     if (axes.axisOrigin === 'left') {
-      // 总贴左边沿:轴位于画布外缘,X 标签贴外缘(轴下方),Y 标签侧向旋转 90°(轴左侧)
+      // 总贴左边沿:标签位于坐标轴"正中心位置"(X 轴中点 / Y 轴中点),
+      // 并再向外偏移一段距离,不与坐标轴及刻度数字重合
+      const xMid = project(d, mapP([(axes.xMin + axes.xMax) / 2, axisX_Y, 0]));
+      const yMid = project(d, mapP([axisY_X, (axes.yMin + axes.yMax) / 2, 0]));
       ctx.fillStyle = cx;
-      ctx.fillText(axes.labelX, xLab[0], xLab[1] + 16 * fz);
+      ctx.fillText(axes.labelX, xMid[0], xMid[1] + 26 * fz);
       ctx.fillStyle = cy;
       ctx.save();
-      ctx.translate(yLab[0] - 14 * fz, yLab[1]);
+      ctx.translate(yMid[0] - 24 * fz, yMid[1]);
       ctx.rotate(-Math.PI / 2);
       ctx.fillText(axes.labelY, 0, 0);
       ctx.restore();
@@ -1264,8 +1283,9 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
         ch = availH;
         cw = ch / ratio;
       }
-      canvas.style.width = `${cw}px`;
-      canvas.style.height = `${ch}px`;
+      // 仅当样式尺寸实际变化时才写 DOM,避免窗口 resize 期间反复触发 layout
+      if (canvas.style.width !== `${cw}px`) canvas.style.width = `${cw}px`;
+      if (canvas.style.height !== `${ch}px`) canvas.style.height = `${ch}px`;
       const dpr = window.devicePixelRatio || 1;
       const pxW = Math.round(cw * dpr);
       const pxH = Math.round(ch * dpr);
@@ -1278,19 +1298,40 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawScene(ctx, cw, ch, params, result?.inputs ?? {}, result?.multiInputs ?? {});
     };
-    // 用 requestAnimationFrame 合并 resize 事件:同一帧内多次触发只重绘一次,
-    // 避免拖动窗口大小时每帧多次全量重绘导致卡顿延迟
-    const rafRef = { id: 0 };
+    // 窗口 resize 重绘调度:rAF 合并同帧多次触发 + 节流(连续 resize 时最小重绘间隔 40ms,
+    // 约 25fps,显著降低 Tauri 打包后 WebView 每帧全量重绘的负担)+ 防抖(resize 停止 120ms
+    // 后强制精确重绘一次,保证最终尺寸像素级准确)。三者配合使拖动窗口缩放流畅无延迟。
+    const state = { raf: 0, timer: 0, last: 0 };
+    const MIN_GAP = 40; // 连续 resize 时最小重绘间隔(ms)
+    const SETTLE_DELAY = 120; // resize 停止后防抖时长(ms)
+    const performDraw = () => {
+      state.last = performance.now();
+      draw();
+    };
     const scheduleDraw = () => {
-      cancelAnimationFrame(rafRef.id);
-      rafRef.id = requestAnimationFrame(draw);
+      // 节流:距上次重绘不足最小间隔时不立即重绘,交给下一帧再检查
+      cancelAnimationFrame(state.raf);
+      state.raf = requestAnimationFrame(() => {
+        if (performance.now() - state.last < MIN_GAP) {
+          scheduleDraw(); // 仍处于密集 resize 中,延后到下一帧检查
+        } else {
+          performDraw();
+        }
+      });
+      // 防抖:resize 停止后延迟精确重绘,兜底保证最终尺寸准确
+      clearTimeout(state.timer);
+      state.timer = window.setTimeout(() => {
+        cancelAnimationFrame(state.raf);
+        performDraw();
+      }, SETTLE_DELAY);
     };
     draw();
     const ro = new ResizeObserver(scheduleDraw);
     ro.observe(wrap);
     return () => {
       ro.disconnect();
-      cancelAnimationFrame(rafRef.id);
+      cancelAnimationFrame(state.raf);
+      clearTimeout(state.timer);
     };
   }, [params, result, nodeId]);
 
@@ -1344,12 +1385,12 @@ export const PrincipledCanvas = memo(function PrincipledCanvas({ nodeId }: { nod
   };
 
   return (
-    <div ref={wrapRef} className="nf-principled">
+    // 滚轮缩放绑定在整个预览窗容器上:范围内任意位置(含画布四周空白)都可缩放
+    <div ref={wrapRef} className="nf-principled" onWheel={onWheel}>
       {/* 仅画布缩放/平移(等比 transform);操作栏/标题不随滚轮缩放 */}
       <div
         className="nf-chart-scale"
         style={{ transform: `translate(${view.pan.x}px, ${view.pan.y}px) scale(${view.zoom})` }}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

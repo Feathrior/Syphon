@@ -44,22 +44,23 @@ export const GraphNodeComponent = memo(function GraphNodeComponent({
   const borderWidth = Math.max(0.75, 2 / zoom);
   const bodyHidden = zoom < 0.55;
 
-  // 统计每个端口上的实际连线数:输出端口多连线时纵向拉伸,区分不同线的连接终点;
-  // 输入端口无论多少条连线都保持固定高度(收敛端无需区分)
+  // 统计每个端口上的实际连线数:输入/输出端口多条连线时都纵向拉伸,
+  // 使同一端口上的多条曲线端点从上到下均匀排开,便于区分不同的连接终点
   const edges = useGraph((s) => s.edges);
-  const outCount = useMemo(() => {
+  const portCount = useMemo(() => {
     const m = new Map<string, number>();
-    for (const e of edges) if (e.source === id && e.sourceHandle) m.set(e.sourceHandle, (m.get(e.sourceHandle) ?? 0) + 1);
+    for (const e of edges) {
+      if (e.source === id && e.sourceHandle) m.set(e.sourceHandle, (m.get(e.sourceHandle) ?? 0) + 1);
+      if (e.target === id && e.targetHandle) m.set(e.targetHandle, (m.get(e.targetHandle) ?? 0) + 1);
+    }
     return m;
   }, [edges, id]);
 
-  /** 输出端口高度:未连线/单连线为 11px 圆角方块;每多 1 条连线纵向延长 10px,上限 64px。
+  /** 端口圆角矩形高度:未连线/单连线为 11px 圆角方块;每多 1 条连线纵向延长 10px,上限 64px。
       所在行高度取 max(18, 端口高度),保证文字行不被压缩。
-      输入端口固定 11px(需求:输入端多连线不延长圆角矩形)。 */
+      输入与输出端口行为一致(多连线时拉伸,端点均匀排开) */
   const handleH = (c: number) => (c <= 1 ? 11 : Math.min(64, 11 + (c - 1) * 10));
   const rowH = (c: number) => Math.max(18, handleH(c));
-  const IN_H = 11; // 输入端口恒定高度
-  const IN_ROW_H = 18; // 输入端所在行恒定高度
 
   const cat = CATEGORY_INFO[config.category];
   // 暗色主题下顶栏提亮,提升白字可读性
@@ -98,47 +99,53 @@ export const GraphNodeComponent = memo(function GraphNodeComponent({
       <div className={`nf-node-body nodrag${bodyHidden ? ' nf-zoom-min' : ''}`}>
         <div className="nf-sockets">
           <div className="nf-sockets-col">
-            {config.inputs.map((sock) => (
-              <div key={sock.id} className="nf-socket nf-socket-in" style={{ minHeight: IN_ROW_H }}>
-                <Handle
-                  type="target"
-                  position={Position.Left}
-                  id={sock.id}
-                  className="nf-handle"
-                  style={{ background: SOCKET_COLOR[sock.type], height: IN_H }}
-                />
-                <span className="nf-socket-name" title={SOCKET_LABEL[sock.type]}>
-                  {sock.name}
-                </span>
-                <span className="nf-socket-type" style={{ color: SOCKET_COLOR[sock.type] }}>
-                  {SOCKET_LABEL[sock.type]}
-                </span>
-              </div>
-            ))}
-            {exposedSockets.map((p) => (
-              <div key={`exp_${p.key}`} className="nf-socket nf-socket-in nf-socket-exposed" style={{ minHeight: IN_ROW_H }}>
-                <Handle
-                  type="target"
-                  position={Position.Left}
-                  id={`exp_${p.key}`}
-                  className="nf-handle nf-handle-exp"
-                  style={{ background: '#94a3b8', height: IN_H }}
-                />
-                <span className="nf-socket-name" title={`暴露参数:接入数据列驱动${p.label}`}>
-                  {p.label}
-                </span>
-                <span className="nf-socket-type" style={{ color: '#94a3b8' }}>
-                  数据
-                </span>
-              </div>
-            ))}
+            {config.inputs.map((sock) => {
+              const h = handleH(portCount.get(sock.id) ?? 0);
+              return (
+                <div key={sock.id} className="nf-socket nf-socket-in" style={{ minHeight: rowH(portCount.get(sock.id) ?? 0) }}>
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={sock.id}
+                    className="nf-handle"
+                    style={{ background: SOCKET_COLOR[sock.type], height: h }}
+                  />
+                  <span className="nf-socket-name" title={SOCKET_LABEL[sock.type]}>
+                    {sock.name}
+                  </span>
+                  <span className="nf-socket-type" style={{ color: SOCKET_COLOR[sock.type] }}>
+                    {SOCKET_LABEL[sock.type]}
+                  </span>
+                </div>
+              );
+            })}
+            {exposedSockets.map((p) => {
+              const h = handleH(portCount.get(`exp_${p.key}`) ?? 0);
+              return (
+                <div key={`exp_${p.key}`} className="nf-socket nf-socket-in nf-socket-exposed" style={{ minHeight: rowH(portCount.get(`exp_${p.key}`) ?? 0) }}>
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={`exp_${p.key}`}
+                    className="nf-handle nf-handle-exp"
+                    style={{ background: '#94a3b8', height: h }}
+                  />
+                  <span className="nf-socket-name" title={`暴露参数:接入数据列驱动${p.label}`}>
+                    {p.label}
+                  </span>
+                  <span className="nf-socket-type" style={{ color: '#94a3b8' }}>
+                    数据
+                  </span>
+                </div>
+              );
+            })}
             {config.inputs.length === 0 && exposedSockets.length === 0 && <div className="nf-socket-empty">无输入</div>}
           </div>
           <div className="nf-sockets-col nf-sockets-col-out">
             {config.outputs.map((sock) => {
-              const h = handleH(outCount.get(sock.id) ?? 0);
+              const h = handleH(portCount.get(sock.id) ?? 0);
               return (
-                <div key={sock.id} className="nf-socket nf-socket-out" style={{ minHeight: rowH(outCount.get(sock.id) ?? 0) }}>
+                <div key={sock.id} className="nf-socket nf-socket-out" style={{ minHeight: rowH(portCount.get(sock.id) ?? 0) }}>
                   <span className="nf-socket-name" title={SOCKET_LABEL[sock.type]}>
                     {sock.name}
                   </span>

@@ -102,13 +102,16 @@ export default function NodeCanvas({ onOpenMenu, boxSelect }: Props) {
   }, []);
 
   // 删除选中的曲线内分割点:Delete/Backspace(曲线恢复原始三次贝塞尔,整条连线保留)。
-  // 用捕获阶段监听,先于 React Flow 自带的"删除选中节点/连线"处理,避免误删其它元素
+  // 用捕获阶段监听 + 阻止继续传播,先于 React Flow 自带的"删除选中节点/连线"处理,
+  // 避免误删其它元素或整条连线
   useEffect(() => {
     const del = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const st = useGraph.getState();
       if (!st.selectedSplitEdgeId) return;
       e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
       const id = st.selectedSplitEdgeId;
       st.updateEdgeData(id, { mid: undefined });
       st.selectSplitEdge(null);

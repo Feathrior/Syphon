@@ -5,6 +5,7 @@ import { useGraph } from '../store/useGraph';
 import { pickJsonFile, saveTextFile } from '../utils/tauri';
 import { isTauri } from '../utils/tauri';
 import { useTheme } from '../utils/theme';
+import { PRESETS } from '../presets';
 
 interface Props {
   boxSelect: boolean;
@@ -84,6 +85,19 @@ const TrashIcon = () => (
       <>
         <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z" />
         <path d="M10 11v6M14 11v6" />
+      </>
+    }
+  />
+);
+
+const PresetIcon = () => (
+  <Icon
+    d={
+      <>
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
       </>
     }
   />
@@ -237,6 +251,16 @@ export default function Toolbar({ boxSelect, setBoxSelect, onOpenSettings, onOpe
     if (window.confirm('确定清空画布上的所有节点吗?')) clearAll();
   };
 
+  // 文件 → 预设:加载内置预设图(替换当前画布,画布非空时先确认)
+  const handlePreset = (json: string, name: string) => {
+    if (nodeCount > 0 && !window.confirm(`加载预设「${name}」将替换当前画布,确定吗?`)) return;
+    if (!loadGraph(json)) {
+      window.alert('预设加载失败');
+    } else {
+      setTimeout(() => fitView({ padding: 0.25 }), 50);
+    }
+  };
+
   const handleSave = async () => {
     if (nodeCount === 0) return;
     const json = saveGraph();
@@ -267,6 +291,14 @@ export default function Toolbar({ boxSelect, setBoxSelect, onOpenSettings, onOpe
   const fileMenu: MenuItem[] = [
     { kind: 'item', label: '保存画布', icon: <SaveIcon />, action: handleSave },
     { kind: 'item', label: '加载画布', icon: <FolderOpenIcon />, action: handleLoad },
+    { kind: 'sep' },
+    // 预设:内置示例图(数据表 → 对应图表),打包在应用中可随时调取
+    ...PRESETS.map((p) => ({
+      kind: 'item' as const,
+      label: `预设 · ${p.name}`,
+      icon: <PresetIcon />,
+      action: () => handlePreset(p.json, p.name),
+    })),
     { kind: 'sep' },
     { kind: 'item', label: '清空画布', icon: <TrashIcon />, danger: true, action: handleClear },
   ];
