@@ -533,9 +533,10 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
     ? configId.slice(4)
     : String(params.chartType ?? 'scatter');
   const wrapRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
-  const divRef = useRef<HTMLDivElement>(null);
-  const prevTypeRef = useRef<string | null>(null);
+  // 静态图片:图表在离屏容器用 ECharts 渲染一次后截图,实例随即销毁。
+  // 节点预览只显示这张图片 —— 无常驻 ECharts 实例、无 tooltip/visualMap 等交互区域,
+  // 显著降低每节点的 DOM 与事件开销;窗口缩放时图片由浏览器自动缩放,无需重绘图表。
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
   // 与原理化输出共用同一套预览交互(指针锚定缩放 / 拖拽平移 / 初始化)
   const { view, onWheel, onPointerDown, onPointerMove, onPointerUp, resetView } = usePreviewView(wrapRef);
   // 导出像素尺寸:支持与原理化输出相同的 canvasPxW/H 参数,默认 1200×900
@@ -543,46 +544,44 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
   const exportH = Math.round(toNum(params.canvasPxH as number | string | undefined) ?? 900);
 
   useEffect(() => {
-    if (!divRef.current) return;
-    if (!chartRef.current) chartRef.current = echarts.init(divRef.current, 'light');
-    const option = buildPresetOption(chartType, params, result?.inputs ?? {});
-    // 论文发表风格的亮色版本:白底、深色文字
-    option.backgroundColor = '#ffffff';
-    // 仅图表类型切换时全量重建,同类型数据变化走增量更新(避免热力图等大图卡顿)
-    const notMerge = prevTypeRef.current !== chartType;
-    prevTypeRef.current = chartType;
-    chartRef.current.setOption(option, notMerge);
-    // ECharts resize 节流 + 防抖:连续 resize 时限制重绘频率(约 25fps),
-    // 停止后延迟一次兜底精确重绘,避免窗口缩放时每帧全量重绘导致卡顿。
-    // 窗口整体缩放期间(isResizing)完全跳过 —— 由 resizeGuard 统一在缩放结束后批量重绘
-    let lastResize = 0;
-    let timer = 0;
-    const onResize = () => {
-      if (isResizing()) return; // 窗口缩放期间跳过,结束后由 onResizeEnd 兜底
-      if (performance.now() - lastResize >= 40) {
-        lastResize = performance.now();
-        chartRef.current?.resize();
-      }
-      clearTimeout(timer);
-      timer = window.setTimeout(() => chartRef.current?.resize(), 120);
-    };
-    const ro = new ResizeObserver(onResize);
-    ro.observe(divRef.current);
-    // 窗口缩放结束后的兜底精确重绘(与各 viewer 统一批量执行,避免逐个 resize 造成帧堆积)
-    const unbindResizeEnd = onResizeEnd(() => chartRef.current?.resize());
-    return () => {
-      ro.disconnect();
-      clearTimeout(timer);
-      unbindResizeEnd();
-    };
-  }, [params, result, nodeId, chartType]);
-
-  useEffect(() => {
-    return () => {
-      chartRef.current?.dispose();
-      chartRef.current = null;
-    };
-  }, []);
+    let cancelled = false;
+    // 离屏渲染容器(固定 640×480,与预览窗宽高比接近);渲染后截图,实例销毁
+    const off = document.createElement('div');
+    off.style.cssText = 'position:fixed;left:-10000px;top:0;width:640px;height:480px;background:#fff;';
+    document.body.appendChild(off);
+    let chart: echarts.ECharts | null = null;
+    try {
+      chart = echarts.init(off, 'light');
+      const option = buildPresetOption(chartType, params, result?.inputs ?? {});
+      // 论文发表风格的亮色版本:白底、深色文字
+      option.backgroundColor = '#ffffff';
+      // 关闭动画:桑基图等布局为异步渐进渲染(默认 animation 下约 1.5s 才完整),
+      // 首帧截图会截到空白起始帧。关闭后所有图表首帧同步渲染,截图立即完整
+      option.animation = false;
+      chart.setOption(option, true);
+      // ECharts canvas 渲染同步完成;rAF 再取一次确保绘制落盘,随后截图并销毁实例
+      const raf = requestAnimationFrame(() => {
+        if (cancelled) return;
+        try {
+          setImgSrc(chart?.getDataURL({ type: 'png', pixelRatio: 1, backgroundColor: '#ffffff' }) ?? null);
+        } catch {
+          setImgSrc(null);
+        } finally {
+          chart?.dispose();
+          off.remove();
+        }
+      });
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(raf);
+        chart?.dispose();
+        off.remove();
+      };
+    } catch {
+      off.remove();
+      return;
+    }
+  }, [params, result, chartType]);
 
   // 导出:按导出像素尺寸离屏渲染(白底 + 紧凑 grid 贴坐标轴)后保存 PNG
   const handleExport = async () => {
@@ -595,6 +594,8 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
       const chart = echarts.init(off, 'light');
       const option = buildPresetOption(chartType, params, result?.inputs ?? {});
       option.backgroundColor = '#ffffff';
+      // 关闭动画:桑基图等异步布局渲染时首帧即完整,避免 120ms 等待后仍截到空白
+      option.animation = false;
       if (option.grid && typeof option.grid === 'object') {
         option.grid = { ...(option.grid as object), ...compactGrid(chartType) };
       }
@@ -621,7 +622,11 @@ export const PresetChart = memo(function PresetChart({ nodeId }: { nodeId: strin
         onPointerLeave={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        <div className="nf-chart" ref={divRef} />
+        {imgSrc ? (
+          <img className="nf-chart-img" src={imgSrc} alt="" draggable={false} />
+        ) : (
+          <div className="nf-chart-loading">渲染中…</div>
+        )}
       </div>
       <div className="nf-viewer-actions">
         <span className="nf-zoom-hint">

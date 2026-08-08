@@ -1,6 +1,6 @@
 [package]
 name = "syphon"
-version = "0.2.6"
+version = "0.2.7"
 description = "Syphon 节点化数据处理工作台"
 edition = "2021"
 

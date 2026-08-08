@@ -49,7 +49,7 @@
   --bg-toolbar: #2b2b2b;
   --bg-raise: #333333;
   --bg-float: #3d3d3d;
-  --bg-canvas: transparent;       /* 透出窗口 Mica */
+  --bg-canvas: #2b2b2b;            /* 不透明白底:窗口已不透明,避免透出窗口背景 */
   --bg-node: #2b2b2b;
   --bg-input: #333333;
   --stroke: rgba(255, 255, 255, 0.08);
@@ -124,10 +124,9 @@ body {
   background: var(--bg-app);
 }
 
-/* ============ 工具栏(高斯模糊毛玻璃) ============
-   悬浮于画布之上,画布内容滚动经过时被模糊;
-   模糊放在 ::before 伪元素上(避免 backdrop-filter 使
-   固定定位的菜单遮罩以工具栏为包含块而失效)。 */
+/* ============ 工具栏(纯色) ============
+   使用不透明纯色背景,取消毛玻璃模糊(backdrop-filter 在窗口缩放/画布
+   滚动时有较高合成开销)。悬浮于画布之上,滚动经过时内容被遮盖。 */
 .nf-toolbar {
   position: absolute;
   top: 0;
@@ -139,25 +138,14 @@ body {
   gap: 10px;
   height: 48px;
   padding: 0 14px;
-  background: transparent;
+  background: var(--bg-toolbar);   /* 纯色顶栏:取消毛玻璃模糊,降低渲染开销 */
   border-bottom: 1px solid var(--stroke);
   flex-shrink: 0;
   user-select: none;
 }
 
-.nf-toolbar::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: rgba(255, 255, 255, 0.66);
-  -webkit-backdrop-filter: blur(18px) saturate(1.5);
-  backdrop-filter: blur(18px) saturate(1.5);
-  transition: background-color 0.3s var(--ease);
-}
-
-[data-theme='dark'] .nf-toolbar::before {
-  background: rgba(43, 43, 43, 0.66);
+[data-theme='dark'] .nf-toolbar {
+  background: var(--bg-toolbar);
 }
 
 .nf-brand {
@@ -1188,6 +1176,26 @@ body {
 .nf-chart {
   width: 100%;
   height: 100%;
+}
+
+/* 静态图表图片:图表离屏渲染一次后以图片显示,无任何交互区域;
+   等比缩放适应预览窗(与原理化输出 canvas 的 contain 行为一致) */
+.nf-chart-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.nf-chart-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 
 /* 查看器预览:滚轮缩放(等比 transform,放大时溢出裁剪,模拟图片查看器) */
